@@ -1,0 +1,11 @@
+name: env_311
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.11
+  - requests
+  - pip
+  - pip:
+      - google-cloud-storage

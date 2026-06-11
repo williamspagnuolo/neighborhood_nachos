@@ -1,16 +1,11 @@
-import requests
 import os
 import datetime as dt
 import json
-from dotenv import load_dotenv
+import requests
 from google.cloud import storage
 
-load_dotenv()
-bucket_name = os.environ.get("GCS_BUCKET_NAME")
-service_acct = os.environ.get("GCS_BUCKET_CREDENTIALS")
 
-
-def call_311_and_upload():
+def call_311_and_upload(bucket_name):
     query_date = str(dt.date.today() - dt.timedelta(days= 2))
 
     url = f"https://data.sfgov.org/resource/vw6y-z8j6.json?$where=updated_datetime>='{query_date}'&$limit=999999"
@@ -18,7 +13,7 @@ def call_311_and_upload():
     response = requests.get(url)
     items = response.json()
 
-    client = storage.Client.from_service_account_json(service_acct)
+    client = storage.Client()
     bucket = client.bucket(bucket_name)
 
     json_data = json.dumps(items, indent=4)
@@ -27,4 +22,6 @@ def call_311_and_upload():
     
     return "311 called and uploaded successfully"
 
-call_311_and_upload()
+if __name__ == '__main__':
+    bucket_name = os.environ.get("GCS_BUCKET_NAME")
+    call_311_and_upload(bucket_name)

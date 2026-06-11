@@ -1,0 +1,5 @@
+FROM --platform=linux/amd64 continuumio/miniconda3
+WORKDIR /app
+COPY * .
+RUN conda env create -f environment.yaml -n env_311
+CMD ["conda", "run", "--no-capture-output", "-n", "env_311", "python", "upload_311_to_bucket.py"]
