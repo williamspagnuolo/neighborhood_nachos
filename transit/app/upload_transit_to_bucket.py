@@ -9,7 +9,7 @@ FEEDS = {
     "VehiclePositions": "https://api.511.org/transit/vehiclepositions",
 }
 
-BASE_CALL_INTERVAL_SECONDS = 40
+BASE_CALL_INTERVAL_SECONDS = 60
 
 AGENCIES = {
     "muni": "SF",
@@ -24,7 +24,7 @@ def parse_api_keys(raw_keys):
 
 
 def select_api_key(api_keys, fetched_at):
-    # Rotate keys deterministically by 40-second slot for stateless runs.
+    # Rotate keys deterministically by base interval slot for stateless runs.
     slot_index = int(fetched_at.timestamp() // BASE_CALL_INTERVAL_SECONDS)
     return api_keys[slot_index % len(api_keys)]
 
@@ -91,7 +91,7 @@ def call_transit_and_upload(feed_agency_api_keys, agency_intervals, bucket_name)
     )
 
 
-if __name__ == "__main__":
+def load_env():
     try:
         from dotenv import load_dotenv
 
@@ -99,6 +99,8 @@ if __name__ == "__main__":
     except ImportError:
         pass
 
+
+def build_config_from_env():
     feed_agency_api_keys = {
         "TripUpdates": {
             "muni": parse_api_keys(os.environ.get("TRIP_UPDATES_MUNI_API_KEYS")),
@@ -119,7 +121,7 @@ if __name__ == "__main__":
             os.environ.get("MUNI_MIN_FETCH_INTERVAL_SECONDS", BASE_CALL_INTERVAL_SECONDS)
         ),
         "bart": int(
-            os.environ.get("BART_MIN_FETCH_INTERVAL_SECONDS", BASE_CALL_INTERVAL_SECONDS * 2)
+            os.environ.get("BART_MIN_FETCH_INTERVAL_SECONDS", BASE_CALL_INTERVAL_SECONDS)
         ),
     }
 
@@ -136,4 +138,14 @@ if __name__ == "__main__":
     if not bucket_name:
         raise ValueError("GCS_BUCKET_NAME environment variable is required")
 
-    print(call_transit_and_upload(feed_agency_api_keys, agency_intervals, bucket_name))
+    return feed_agency_api_keys, agency_intervals, bucket_name
+
+
+def run_once_from_env():
+    load_env()
+    feed_agency_api_keys, agency_intervals, bucket_name = build_config_from_env()
+    return call_transit_and_upload(feed_agency_api_keys, agency_intervals, bucket_name)
+
+
+if __name__ == "__main__":
+    print(run_once_from_env())
