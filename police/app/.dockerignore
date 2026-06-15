@@ -1,0 +1,25 @@
+# Secrets and local config
+.env
+.police_api_reporting.ssh/
+
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+.vscode/
+
+# Docs
+README*
