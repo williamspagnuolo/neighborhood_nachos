@@ -1,6 +1,7 @@
 # Python
 __pycache__/
 .env
+transit/app/job.env.yaml
 
 # Conda / virtualenv
 .conda/
