@@ -1,0 +1,95 @@
+2026-06-25 17:55:23,772 DEBUG    root            Loaded Command Group: ['gcloud', 'run']
+2026-06-25 17:55:23,919 DEBUG    root            Loaded Command Group: ['gcloud', 'run', 'jobs']
+2026-06-25 17:55:23,920 DEBUG    root            Loaded Command Group: ['gcloud', 'run', 'jobs', 'executions']
+2026-06-25 17:55:23,984 DEBUG    root            Loaded Command Group: ['gcloud', 'run', 'jobs', 'executions', 'list']
+2026-06-25 17:55:23,988 DEBUG    root            Running [gcloud.run.jobs.executions.list] with arguments: [--format: "json", --job: "tripupdates-parse-day", --project: "neighboorhood-nachos", --region: "us-central1"]
+2026-06-25 17:55:23,990 DEBUG    root            On GCE from disk cache: False
+2026-06-25 17:55:23,991 DEBUG    root            On GCE from memory cache: False
+2026-06-25 17:55:23,992 DEBUG    root            (gcloud.run.jobs.executions.list) You do not currently have an active account selected.
+Please run:
+
+  $ gcloud auth login
+
+to obtain new credentials.
+
+If you have already logged in with a different account, run:
+
+  $ gcloud config set account ACCOUNT
+
+to select an already authenticated account to use.
+Traceback (most recent call last):
+  File "/opt/homebrew/Caskroom/gcloud-cli/548.0.0/google-cloud-sdk/lib/googlecloudsdk/calliope/cli.py", line 941, in Execute
+    resources = calliope_command.Run(cli=self, args=args)
+  File "/opt/homebrew/Caskroom/gcloud-cli/548.0.0/google-cloud-sdk/lib/googlecloudsdk/calliope/backend.py", line 968, in Run
+    resources = command_instance.Run(args)
+  File "/opt/homebrew/Caskroom/gcloud-cli/548.0.0/google-cloud-sdk/lib/surface/run/jobs/executions/list.py", line 130, in Run
+    with serverless_operations.Connect(conn_context) as client:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/contextlib.py", line 141, in __enter__
+    return next(self.gen)
+  File "/opt/homebrew/Caskroom/gcloud-cli/548.0.0/google-cloud-sdk/lib/googlecloudsdk/command_lib/run/serverless_operations.py", line 115, in Connect
+    op_client = apis.GetClientInstance(
+        conn_context.api_name,
+    ...<2 lines>...
+        location=conn_context.region,
+    )
+  File "/opt/homebrew/Caskroom/gcloud-cli/548.0.0/google-cloud-sdk/lib/googlecloudsdk/api_lib/util/apis.py", line 279, in GetClientInstance
+    return apis_internal._GetClientInstance(
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        api_name,
+        ^^^^^^^^^
+    ...<5 lines>...
+        region=regional.LocationToRegion(location) if location else None,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/opt/homebrew/Caskroom/gcloud-cli/548.0.0/google-cloud-sdk/lib/googlecloudsdk/api_lib/util/apis_internal.py", line 175, in _GetClientInstance
+    http_client = transports.GetApitoolsTransport(
+        response_encoding=transport.ENCODING,
+        timeout=http_timeout_sec if http_timeout_sec else 'unset')
+  File "/opt/homebrew/Caskroom/gcloud-cli/548.0.0/google-cloud-sdk/lib/googlecloudsdk/core/credentials/transports.py", line 69, in GetApitoolsTransport
+    session = requests.GetSession(
+        timeout=timeout,
+    ...<4 lines>...
+        redact_request_body_reason=redact_request_body_reason,
+    )
+  File "/opt/homebrew/Caskroom/gcloud-cli/548.0.0/google-cloud-sdk/lib/googlecloudsdk/core/credentials/requests.py", line 81, in GetSession
+    credentials = store.LoadIfEnabled(
+        allow_account_impersonation
+    )
+  File "/opt/homebrew/Caskroom/gcloud-cli/548.0.0/google-cloud-sdk/lib/googlecloudsdk/core/credentials/store.py", line 601, in LoadIfEnabled
+    return Load(
+        allow_account_impersonation=allow_account_impersonation)
+  File "/opt/homebrew/Caskroom/gcloud-cli/548.0.0/google-cloud-sdk/lib/googlecloudsdk/core/credentials/store.py", line 825, in Load
+    cred = _Load(
+        account,
+    ...<2 lines>...
+        cache_only_rapt=cache_only_rapt,
+    )
+  File "/opt/homebrew/Caskroom/gcloud-cli/548.0.0/google-cloud-sdk/lib/googlecloudsdk/core/credentials/store.py", line 961, in _Load
+    raise creds_exceptions.NoActiveAccountException(
+        named_configs.ActiveConfig(False).file_path)
+googlecloudsdk.core.credentials.exceptions.NoActiveAccountException: You do not currently have an active account selected.
+Please run:
+
+  $ gcloud auth login
+
+to obtain new credentials.
+
+If you have already logged in with a different account, run:
+
+  $ gcloud config set account ACCOUNT
+
+to select an already authenticated account to use.
+2026-06-25 17:55:23,995 ERROR    root            (gcloud.run.jobs.executions.list) You do not currently have an active account selected.
+Please run:
+
+  $ gcloud auth login
+
+to obtain new credentials.
+
+If you have already logged in with a different account, run:
+
+  $ gcloud config set account ACCOUNT
+
+to select an already authenticated account to use.

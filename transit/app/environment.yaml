@@ -5,8 +5,11 @@ channels:
 
 dependencies:
   - python=3.11
+  - pandas
+  - pyarrow
   - requests
   - pip
   - pip:
+      - gtfs-realtime-bindings
       - google-cloud-storage
       - python-dotenv

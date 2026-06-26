@@ -10,6 +10,8 @@ FEEDS = {
 }
 
 BASE_CALL_INTERVAL_SECONDS = 60
+RAW_ROOT_PREFIX = "raw"
+LATEST_ROOT_PREFIX = "latest"
 
 AGENCIES = {
     "muni": "SF",
@@ -58,14 +60,32 @@ def upload_feed_to_bucket(bucket_name, blob_name, data):
     blob.upload_from_string(data, content_type="application/x-protobuf")
 
 
-def build_blob_name(feed_name, agency_name, fetched_at):
+def copy_blob_between_buckets(
+    source_bucket_name, source_blob_name, destination_bucket_name, destination_blob_name
+):
+    client = storage.Client()
+    source_bucket = client.bucket(source_bucket_name)
+    source_blob = source_bucket.blob(source_blob_name)
+    destination_bucket = client.bucket(destination_bucket_name)
+    source_bucket.copy_blob(source_blob, destination_bucket, new_name=destination_blob_name)
+
+
+def build_raw_blob_name(feed_name, agency_name, fetched_at, raw_root_prefix):
     query_date = fetched_at.strftime("%Y-%m-%d")
     timestamp = fetched_at.strftime("%Y-%m-%dT%H-%M-%S.%fZ")
-    return f"{feed_name}/{agency_name}/{query_date}/{timestamp}.pb"
+    return f"{raw_root_prefix}/{feed_name}/{agency_name}/{query_date}/{timestamp}.pb"
 
 
-def call_transit_and_upload(feed_agency_api_keys, agency_intervals, bucket_name):
-    uploaded = []
+def call_transit_and_upload(
+    feed_agency_api_keys,
+    agency_intervals,
+    raw_bucket_name,
+    raw_root_prefix,
+    latest_bucket_name,
+    latest_root_prefix,
+):
+    uploaded_raw = []
+    copied_latest = []
     skipped = []
 
     for feed_name in FEEDS:
@@ -79,15 +99,41 @@ def call_transit_and_upload(feed_agency_api_keys, agency_intervals, bucket_name)
                 feed_agency_api_keys[feed_name][agency_name], fetched_at
             )
             data = fetch_gtfs_rt_feed(api_key, agency_id, feed_name)
-            blob_name = build_blob_name(feed_name, agency_name, fetched_at)
-            upload_feed_to_bucket(bucket_name, blob_name, data)
-            uploaded.append(blob_name)
+            raw_blob_name = build_raw_blob_name(
+                feed_name, agency_name, fetched_at, raw_root_prefix
+            )
+            latest_blob_name = raw_blob_name.replace(
+                f"{raw_root_prefix}/",
+                f"{latest_root_prefix}/",
+                1,
+            )
+            latest_blob_name = latest_blob_name.replace(
+                f"/{fetched_at.strftime('%Y-%m-%d')}/",
+                "/",
+                1,
+            )
 
-    uploaded_msg = ", ".join(uploaded) if uploaded else "none"
+            # Write immutable historical snapshot to raw/.
+            upload_feed_to_bucket(raw_bucket_name, raw_blob_name, data)
+            uploaded_raw.append(raw_blob_name)
+
+            # Promote the same snapshot from raw/ into latest/<Feed>/<agency>/<timestamp>.pb
+            copy_blob_between_buckets(
+                raw_bucket_name,
+                raw_blob_name,
+                latest_bucket_name,
+                latest_blob_name,
+            )
+            copied_latest.append(latest_blob_name)
+
+    uploaded_raw_msg = ", ".join(uploaded_raw) if uploaded_raw else "none"
+    copied_latest_msg = ", ".join(copied_latest) if copied_latest else "none"
     skipped_msg = ", ".join(skipped) if skipped else "none"
     return (
         "transit feed run complete "
-        f"(uploaded: {uploaded_msg}; skipped by interval: {skipped_msg})"
+        f"(raw uploaded: {uploaded_raw_msg}; "
+        f"latest copied: {copied_latest_msg}; "
+        f"skipped by interval: {skipped_msg})"
     )
 
 
@@ -125,7 +171,15 @@ def build_config_from_env():
         ),
     }
 
-    bucket_name = os.environ.get("GCS_BUCKET_NAME")
+    # Prefer explicit raw bucket naming, but keep backward compatibility.
+    raw_bucket_name = os.environ.get("GCS_RAW_BUCKET_NAME") or os.environ.get(
+        "GCS_BUCKET_NAME"
+    )
+    raw_root_prefix = os.environ.get("TRANSIT_RAW_ROOT_PREFIX", RAW_ROOT_PREFIX).strip("/")
+    latest_bucket_name = os.environ.get("GCS_LATEST_BUCKET_NAME") or raw_bucket_name
+    latest_root_prefix = os.environ.get(
+        "TRANSIT_LATEST_ROOT_PREFIX", LATEST_ROOT_PREFIX
+    ).strip("/")
 
     for feed_name, agency_config in feed_agency_api_keys.items():
         for agency_name, keys in agency_config.items():
@@ -135,16 +189,43 @@ def build_config_from_env():
                     f"Missing API keys for {feed_name} {agency_name}. "
                     f"Set {env_var_name} in .env."
                 )
-    if not bucket_name:
-        raise ValueError("GCS_BUCKET_NAME environment variable is required")
+    if not raw_bucket_name:
+        raise ValueError(
+            "GCS_RAW_BUCKET_NAME (or legacy GCS_BUCKET_NAME) environment variable is required"
+        )
+    if not latest_bucket_name:
+        raise ValueError(
+            "GCS_LATEST_BUCKET_NAME (or GCS_RAW_BUCKET_NAME/GCS_BUCKET_NAME fallback) is required"
+        )
 
-    return feed_agency_api_keys, agency_intervals, bucket_name
+    return (
+        feed_agency_api_keys,
+        agency_intervals,
+        raw_bucket_name,
+        raw_root_prefix,
+        latest_bucket_name,
+        latest_root_prefix,
+    )
 
 
 def run_once_from_env():
     load_env()
-    feed_agency_api_keys, agency_intervals, bucket_name = build_config_from_env()
-    return call_transit_and_upload(feed_agency_api_keys, agency_intervals, bucket_name)
+    (
+        feed_agency_api_keys,
+        agency_intervals,
+        raw_bucket_name,
+        raw_root_prefix,
+        latest_bucket_name,
+        latest_root_prefix,
+    ) = build_config_from_env()
+    return call_transit_and_upload(
+        feed_agency_api_keys,
+        agency_intervals,
+        raw_bucket_name,
+        raw_root_prefix,
+        latest_bucket_name,
+        latest_root_prefix,
+    )
 
 
 if __name__ == "__main__":
