@@ -2,4 +2,5 @@ FROM --platform=linux/amd64 continuumio/miniconda3
 WORKDIR /app
 COPY . .
 RUN conda env create -f environment.yaml -n env_transit
-CMD ["conda", "run", "--no-capture-output", "-n", "env_transit", "python", "upload_transit_to_bucket.py"]
+ENTRYPOINT ["conda", "run", "--no-capture-output", "-n", "env_transit", "python"]
+CMD ["upload_transit_to_bucket.py"]
