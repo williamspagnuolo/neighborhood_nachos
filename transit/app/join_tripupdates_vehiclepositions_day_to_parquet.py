@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pandas as pd
 from google.cloud import storage
+from google.cloud.storage.blob import Blob
 
 JOIN_KEYS = [
     "agency_id",
@@ -78,7 +79,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--output-gcs-prefix",
-        default="latest",
+        default="latest/joined",
         help="Destination prefix for joined output (service date is appended).",
     )
     parser.add_argument(
@@ -112,11 +113,17 @@ def _normalize_join_key_types(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _list_parquet_blobs_for_day(
-    client: storage.Client, bucket_name: str, prefix_root: str, agency: str, service_date: str
-) -> list[storage.Blob]:
+    client: storage.Client,
+    bucket_name: str,
+    prefix_root: str,
+    agency: str,
+    service_date: str,
+) -> list[Blob]:
     bucket_prefix = f"{prefix_root.strip('/')}/{agency}/{service_date}/"
     blobs = [
-        b for b in client.list_blobs(bucket_name, prefix=bucket_prefix) if b.name.endswith(".parquet")
+        b
+        for b in client.list_blobs(bucket_name, prefix=bucket_prefix)
+        if b.name.endswith(".parquet")
     ]
     if blobs:
         return sorted(blobs, key=lambda b: b.name)
@@ -124,17 +131,23 @@ def _list_parquet_blobs_for_day(
     # Compatibility fallback for single-file layout.
     single_file_path = f"{prefix_root.strip('/')}/{agency}/{service_date}.parquet"
     single_file_blobs = [
-        b for b in client.list_blobs(bucket_name, prefix=single_file_path) if b.name == single_file_path
+        b
+        for b in client.list_blobs(bucket_name, prefix=single_file_path)
+        if b.name == single_file_path
     ]
     return single_file_blobs
 
 
 def _download_and_concat_parquet(
-    client: storage.Client, bucket_name: str, blobs: list[storage.Blob], local_dir: Path
+    client: storage.Client,
+    bucket_name: str,
+    blobs: list[Blob],
+    local_dir: Path,
 ) -> pd.DataFrame:
     if not blobs:
         return pd.DataFrame()
 
+    ensure_dir(str(local_dir))
     bucket = client.bucket(bucket_name)
     local_paths: list[Path] = []
     for idx, blob in enumerate(blobs):
