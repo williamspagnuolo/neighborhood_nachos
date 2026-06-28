@@ -1,15 +1,19 @@
 name: env_transform_311
+
 channels:
   - conda-forge
+
 dependencies:
   - python=3.12
-  - requests
-  - pandas
+  - pandas=2.2.*
+  - geopandas=1.0.*
+  - shapely=2.0.*
   - numpy
-  - matplotlib
-  - geopandas
-  - shapely
+  - pyarrow
+  - requests
   - pip
   - pip:
       - google-cloud-storage
       - google-cloud-bigquery
+      - google-auth
+      - db-dtypes

@@ -7,7 +7,6 @@ from google.cloud import bigquery
 import geopandas as gpd
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 from shapely import wkt
 
 
@@ -48,7 +47,7 @@ def add_ids_to_gdf(gdf, neighborhoods, police_districts):
     gdf1.drop(columns=['index_right'], inplace=True)
     gdf2 = gpd.sjoin(gdf1, neighborhoods[['neighborhood_id', 'geometry']], how='left', predicate='within')
 
-    mask = gdf['geometry'].is_empty
+    mask = gdf2['geometry'].is_empty
     mask_neighbor = gdf2['neighborhood_id'].isna()
     mask_pd = gdf2['police_district_id'].isna()
     if mask.any():
@@ -61,8 +60,8 @@ def add_ids_to_gdf(gdf, neighborhoods, police_districts):
         lookup = police_districts.set_index('name')['police_district_id']
         gdf2.loc[mask_pd, 'police_district_id'] = gdf2.loc[mask_pd, 'police_district'].str.capitalize().map(lookup)
     
-    gdf2['police_district_id'].fillna(404, inplace=True)
-    gdf2['neighborhood_id'].fillna(404, inplace=True)
+    gdf2['neighborhood_id'] = gdf2['neighborhood_id'].fillna(404)
+    gdf2['police_district_id'] = gdf2['police_district_id'].fillna(404)
 
     return gdf2
 
@@ -75,7 +74,9 @@ def format_gdf_final_columns(gdf):
                    'agency_responsible', 'service_name', 'service_subtype', 'service_details', 
                    'supervisor_district', 'lat', 'long', 'geometry', 'source', 'media_url']
     
-    gdf1.loc[:, 'supervisor_district'] = gdf1['supervisor_district'].fillna(404)
+    gdf1['geometry'] = gdf1.geometry.to_wkt()
+    
+    gdf1.loc[:, 'supervisor_district'] = gdf1['supervisor_district'].fillna('404')
     gdf1['supervisor_district'] = gdf1['supervisor_district'].astype(float)
 
     timestamp_cols = ['requested_datetime', 'updated_datetime', 'closed_datetime']
@@ -86,8 +87,6 @@ def format_gdf_final_columns(gdf):
     
     gdf1 = gdf1.astype(
     {'311_incident_id': 'int64',
-     'neighborhood_id': 'int64',
-     'police_district_id': 'int64',
      'status_description': str,
      'status_notes': str,
      'agency_responsible': str,
@@ -97,7 +96,6 @@ def format_gdf_final_columns(gdf):
      'supervisor_district': 'int64',
      'lat': float,
      'long': float,
-     'geometry': str,
      'source': str,
      'media_url': str})
 
