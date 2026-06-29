@@ -78,6 +78,83 @@ python -m dashboard.app.app
 
 Open [http://localhost:8050](http://localhost:8050).
 
+## Deploy to Cloud Run
+
+This dashboard can be deployed as a containerized web service on Cloud Run.
+
+### 1) One-time setup
+
+```bash
+export PROJECT_ID="<your-project-id>"
+export REGION="us-central1"
+export REPO_NAME="dash-apps"
+export SERVICE_NAME="sf-livability-dashboard"
+export SA_NAME="dashboard-runner"
+
+gcloud config set project "$PROJECT_ID"
+
+gcloud services enable \
+  run.googleapis.com \
+  cloudbuild.googleapis.com \
+  artifactregistry.googleapis.com \
+  bigquery.googleapis.com
+
+gcloud artifacts repositories create "$REPO_NAME" \
+  --repository-format=docker \
+  --location="$REGION" \
+  --description="Dashboard containers" || true
+```
+
+### 2) Runtime service account and IAM
+
+```bash
+gcloud iam service-accounts create "$SA_NAME" \
+  --display-name "Dashboard runtime SA" || true
+
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --role="roles/bigquery.jobUser"
+
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --role="roles/bigquery.dataViewer"
+```
+
+### 3) Build and push image
+
+From repo root:
+
+```bash
+export IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${SERVICE_NAME}:$(date +%Y%m%d%H%M%S)"
+
+gcloud builds submit "dashboard" --tag "$IMAGE"
+```
+
+### 4) Deploy Cloud Run service
+
+```bash
+gcloud run deploy "$SERVICE_NAME" \
+  --image "$IMAGE" \
+  --region "$REGION" \
+  --platform managed \
+  --service-account "${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --allow-unauthenticated \
+  --port 8080 \
+  --set-env-vars "DASH_BQ_PROJECT=${PROJECT_ID},DASH_BQ_DATASET=neighborhood_livability_data,DASH_BQ_LOCATION=US"
+```
+
+### 5) Verify
+
+```bash
+gcloud run services describe "$SERVICE_NAME" --region "$REGION" --format='value(status.url)'
+gcloud run services logs read "$SERVICE_NAME" --region "$REGION" --limit=100
+```
+
+Notes:
+- Cloud Run injects `PORT`; the dashboard container serves with `gunicorn`.
+- Add more env overrides in `--set-env-vars` if your dataset/table names differ.
+- If you do not want a public endpoint, remove `--allow-unauthenticated` and configure IAM access.
+
 ## Validation checklist
 
 - Toggle mode resets selected boundary.

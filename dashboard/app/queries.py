@@ -26,37 +26,48 @@ class DashboardQueries:
 
     def fetch_time_bounds_utc(self) -> tuple[dt.datetime, dt.datetime] | None:
         sql = f"""
-WITH all_bounds AS (
+WITH metrics_bounds AS (
   SELECT
-    MIN(requested_datetime) AS min_ts,
-    MAX(requested_datetime) AS max_ts
-  FROM {self.config.table_id(self.config.table_311)}
-  UNION ALL
-  SELECT
-    MIN(report_datetime) AS min_ts,
-    MAX(report_datetime) AS max_ts
-  FROM {self.config.table_id(self.config.table_police)}
-  UNION ALL
-  SELECT
-    MIN(arrival_time_predicted) AS min_ts,
-    MAX(arrival_time_predicted) AS max_ts
-  FROM {self.config.table_id(self.config.table_trip_stops)}
+    (SELECT MIN(requested_datetime) FROM {self.config.table_id(self.config.table_311)}) AS min_311,
+    (SELECT MAX(requested_datetime) FROM {self.config.table_id(self.config.table_311)}) AS max_311,
+    (SELECT MIN(report_datetime) FROM {self.config.table_id(self.config.table_police)}) AS min_police,
+    (SELECT MAX(report_datetime) FROM {self.config.table_id(self.config.table_police)}) AS max_police,
+    (
+      SELECT MIN(arrival_time_predicted)
+      FROM {self.config.table_id(self.config.table_trip_stops)}
+      WHERE arrival_time_predicted IS NOT NULL
+    ) AS min_transit,
+    (
+      SELECT MAX(arrival_time_predicted)
+      FROM {self.config.table_id(self.config.table_trip_stops)}
+      WHERE arrival_time_predicted IS NOT NULL
+    ) AS max_transit
 )
 SELECT
-  MIN(min_ts) AS global_min_ts,
-  MAX(max_ts) AS global_max_ts
-FROM all_bounds
-WHERE min_ts IS NOT NULL AND max_ts IS NOT NULL
+  LEAST(min_311, min_police, min_transit) AS global_min_ts,
+  GREATEST(max_311, max_police, max_transit) AS global_max_ts,
+  GREATEST(min_311, min_police, min_transit) AS overlap_min_ts,
+  LEAST(max_311, max_police, max_transit) AS overlap_max_ts
+FROM metrics_bounds
 """
         rows = self._run_query(sql=sql, params=[])
         if not rows:
             return None
         row = rows[0]
-        min_ts = row.get("global_min_ts")
-        max_ts = row.get("global_max_ts")
-        if min_ts is None or max_ts is None:
+        global_min_ts = row.get("global_min_ts")
+        global_max_ts = row.get("global_max_ts")
+        overlap_min_ts = row.get("overlap_min_ts")
+        overlap_max_ts = row.get("overlap_max_ts")
+
+        # Prefer the overlap across all data domains, because dashboard metrics
+        # are shown together and this avoids defaulting to date windows where
+        # one or more domains have no data.
+        if overlap_min_ts is not None and overlap_max_ts is not None and overlap_min_ts <= overlap_max_ts:
+            return overlap_min_ts, overlap_max_ts
+
+        if global_min_ts is None or global_max_ts is None:
             return None
-        return min_ts, max_ts
+        return global_min_ts, global_max_ts
 
     def fetch_boundary_features(self, mode: BoundaryMode) -> list[dict[str, Any]]:
         table_name = self._boundary_table_for_mode(mode)
@@ -77,6 +88,8 @@ ORDER BY name
         boundary_id: str,
         start_utc: dt.datetime,
         end_utc: dt.datetime,
+        local_start_time: dt.time,
+        local_end_time: dt.time,
     ) -> dict[str, Any]:
         boundary_column = MODE_TO_BOUNDARY_COLUMN[mode]
 
@@ -86,18 +99,24 @@ ORDER BY name
                 boundary_id=boundary_id,
                 start_utc=start_utc,
                 end_utc=end_utc,
+                local_start_time=local_start_time,
+                local_end_time=local_end_time,
             ),
             "hist_311": self._fetch_311_histogram(
                 boundary_column=boundary_column,
                 boundary_id=boundary_id,
                 start_utc=start_utc,
                 end_utc=end_utc,
+                local_start_time=local_start_time,
+                local_end_time=local_end_time,
             ),
             "hist_police": self._fetch_police_histogram(
                 boundary_column=boundary_column,
                 boundary_id=boundary_id,
                 start_utc=start_utc,
                 end_utc=end_utc,
+                local_start_time=local_start_time,
+                local_end_time=local_end_time,
             ),
         }
         return metrics
@@ -108,6 +127,8 @@ ORDER BY name
         boundary_id: str,
         start_utc: dt.datetime,
         end_utc: dt.datetime,
+        local_start_time: dt.time,
+        local_end_time: dt.time,
     ) -> dict[str, Any]:
         sql = f"""
 WITH incidents_311 AS (
@@ -117,6 +138,8 @@ WITH incidents_311 AS (
     AND CAST({boundary_column} AS STRING) = @boundary_id
     AND requested_datetime >= @start_utc
     AND requested_datetime < @end_utc
+    AND TIME(requested_datetime, "America/Los_Angeles") >= @local_start_time
+    AND TIME(requested_datetime, "America/Los_Angeles") <= @local_end_time
 ),
 police AS (
   SELECT COUNT(*) AS cnt
@@ -125,6 +148,8 @@ police AS (
     AND CAST({boundary_column} AS STRING) = @boundary_id
     AND report_datetime >= @start_utc
     AND report_datetime < @end_utc
+    AND TIME(report_datetime, "America/Los_Angeles") >= @local_start_time
+    AND TIME(report_datetime, "America/Los_Angeles") <= @local_end_time
 ),
 transit AS (
   SELECT
@@ -141,6 +166,8 @@ transit AS (
     AND CAST(s.{boundary_column} AS STRING) = @boundary_id
     AND t.arrival_time_predicted >= @start_utc
     AND t.arrival_time_predicted < @end_utc
+    AND TIME(t.arrival_time_predicted, "America/Los_Angeles") >= @local_start_time
+    AND TIME(t.arrival_time_predicted, "America/Los_Angeles") <= @local_end_time
 )
 SELECT
   incidents_311.cnt AS incidents_311_total,
@@ -156,6 +183,8 @@ FROM incidents_311, police, transit
                 bigquery.ScalarQueryParameter("boundary_id", "STRING", boundary_id),
                 bigquery.ScalarQueryParameter("start_utc", "TIMESTAMP", start_utc),
                 bigquery.ScalarQueryParameter("end_utc", "TIMESTAMP", end_utc),
+                bigquery.ScalarQueryParameter("local_start_time", "TIME", local_start_time),
+                bigquery.ScalarQueryParameter("local_end_time", "TIME", local_end_time),
             ],
         )
         if not rows:
@@ -174,6 +203,8 @@ FROM incidents_311, police, transit
         boundary_id: str,
         start_utc: dt.datetime,
         end_utc: dt.datetime,
+        local_start_time: dt.time,
+        local_end_time: dt.time,
     ) -> list[dict[str, Any]]:
         sql = f"""
 SELECT
@@ -184,6 +215,8 @@ WHERE {boundary_column} IS NOT NULL
   AND CAST({boundary_column} AS STRING) = @boundary_id
   AND requested_datetime >= @start_utc
   AND requested_datetime < @end_utc
+  AND TIME(requested_datetime, "America/Los_Angeles") >= @local_start_time
+  AND TIME(requested_datetime, "America/Los_Angeles") <= @local_end_time
 GROUP BY category
 ORDER BY category_count DESC, category ASC
 """
@@ -193,6 +226,8 @@ ORDER BY category_count DESC, category ASC
                 bigquery.ScalarQueryParameter("boundary_id", "STRING", boundary_id),
                 bigquery.ScalarQueryParameter("start_utc", "TIMESTAMP", start_utc),
                 bigquery.ScalarQueryParameter("end_utc", "TIMESTAMP", end_utc),
+                bigquery.ScalarQueryParameter("local_start_time", "TIME", local_start_time),
+                bigquery.ScalarQueryParameter("local_end_time", "TIME", local_end_time),
             ],
         )
 
@@ -202,6 +237,8 @@ ORDER BY category_count DESC, category ASC
         boundary_id: str,
         start_utc: dt.datetime,
         end_utc: dt.datetime,
+        local_start_time: dt.time,
+        local_end_time: dt.time,
     ) -> list[dict[str, Any]]:
         sql = f"""
 SELECT
@@ -212,6 +249,8 @@ WHERE {boundary_column} IS NOT NULL
   AND CAST({boundary_column} AS STRING) = @boundary_id
   AND report_datetime >= @start_utc
   AND report_datetime < @end_utc
+  AND TIME(report_datetime, "America/Los_Angeles") >= @local_start_time
+  AND TIME(report_datetime, "America/Los_Angeles") <= @local_end_time
 GROUP BY category
 ORDER BY category_count DESC, category ASC
 """
@@ -221,6 +260,8 @@ ORDER BY category_count DESC, category ASC
                 bigquery.ScalarQueryParameter("boundary_id", "STRING", boundary_id),
                 bigquery.ScalarQueryParameter("start_utc", "TIMESTAMP", start_utc),
                 bigquery.ScalarQueryParameter("end_utc", "TIMESTAMP", end_utc),
+                bigquery.ScalarQueryParameter("local_start_time", "TIME", local_start_time),
+                bigquery.ScalarQueryParameter("local_end_time", "TIME", local_end_time),
             ],
         )
 

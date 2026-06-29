@@ -4,7 +4,7 @@ import datetime as dt
 import json
 import logging
 
-from dash import Dash, Input, Output, State, dcc, html
+from dash import Dash, Input, Output, State, dcc, html, no_update
 
 from .bigquery_client import create_client
 from .boundaries import BoundaryLayer, BoundaryService
@@ -21,14 +21,18 @@ logging.basicConfig(
 LOGGER = logging.getLogger(__name__)
 
 
-def _default_date_range(queries: DashboardQueries) -> tuple[str, str]:
+def _default_date_range(queries: DashboardQueries) -> tuple[str, str, str, str]:
     bounds = queries.fetch_time_bounds_utc()
     if bounds is None:
         end_local = dt.datetime.now(tz=PACIFIC_TZ).date()
         start_local = end_local - dt.timedelta(days=7)
-        return start_local.isoformat(), end_local.isoformat()
+        start_text = start_local.isoformat()
+        end_text = end_local.isoformat()
+        return start_text, end_text, start_text, end_text
     min_utc, max_utc = bounds
-    return utc_to_pacific_date(min_utc), utc_to_pacific_date(max_utc)
+    min_date = utc_to_pacific_date(min_utc)
+    max_date = utc_to_pacific_date(max_utc)
+    return min_date, max_date, min_date, max_date
 
 
 def _format_int(value: int | None) -> str:
@@ -54,6 +58,24 @@ def _format_percent(value: float | None) -> str:
     return f"{float(value):.1f}%"
 
 
+def _parse_local_time(value: str | None, fallback: dt.time) -> dt.time:
+    if not value:
+        return fallback
+    parsed = dt.datetime.strptime(value, "%H:%M").time()
+    return parsed.replace(second=0, microsecond=0)
+
+
+def _selected_heading(mode: BoundaryMode) -> str:
+    return "Selected Neighborhood:" if mode == "neighborhoods" else "Selected Police District:"
+
+
+def _selected_label_children(mode: BoundaryMode, name: str) -> list[html.Div]:
+    return [
+        html.Div(_selected_heading(mode), style={"fontSize": "13px", "color": "#4B5563"}),
+        html.Div(name, style={"fontSize": "24px", "fontWeight": "700", "lineHeight": "1.2"}),
+    ]
+
+
 def build_dashboard_app() -> Dash:
     config = AppConfig.from_env()
     bq_client = create_client(config)
@@ -65,12 +87,17 @@ def build_dashboard_app() -> Dash:
     )
 
     try:
-        default_start_date, default_end_date = _default_date_range(queries=queries)
+        default_start_date, default_end_date, min_allowed_date, max_allowed_date = _default_date_range(
+            queries=queries
+        )
     except Exception as exc:  # noqa: BLE001
         LOGGER.warning("Could not fetch default date bounds: %s", exc)
         end_local = dt.datetime.now(tz=PACIFIC_TZ).date()
-        default_start_date = (end_local - dt.timedelta(days=7)).isoformat()
+        start_local = end_local - dt.timedelta(days=7)
+        default_start_date = start_local.isoformat()
         default_end_date = end_local.isoformat()
+        min_allowed_date = default_start_date
+        max_allowed_date = default_end_date
 
     app = Dash(__name__)
     app.title = "SF Interactive Dashboard"
@@ -107,7 +134,38 @@ def build_dashboard_app() -> Dash:
                                         id="date-range",
                                         start_date=default_start_date,
                                         end_date=default_end_date,
+                                        min_date_allowed=min_allowed_date,
+                                        max_date_allowed=max_allowed_date,
                                         display_format="YYYY-MM-DD",
+                                        updatemode="bothdates",
+                                    ),
+                                ],
+                                style={"display": "flex", "flexDirection": "column", "gap": "8px"},
+                            ),
+                            html.Div(
+                                [
+                                    html.Label("Time window (Pacific Time)", style={"fontWeight": "600"}),
+                                    html.Div(
+                                        [
+                                            dcc.Input(
+                                                id="time-start",
+                                                type="text",
+                                                value="00:00",
+                                                debounce=True,
+                                                placeholder="HH:MM",
+                                                style={"width": "110px"},
+                                            ),
+                                            html.Span("to", style={"color": "#4B5563"}),
+                                            dcc.Input(
+                                                id="time-end",
+                                                type="text",
+                                                value="23:59",
+                                                debounce=True,
+                                                placeholder="HH:MM",
+                                                style={"width": "110px"},
+                                            ),
+                                        ],
+                                        style={"display": "flex", "alignItems": "center", "gap": "8px"},
                                     ),
                                 ],
                                 style={"display": "flex", "flexDirection": "column", "gap": "8px"},
@@ -115,9 +173,11 @@ def build_dashboard_app() -> Dash:
                             html.Div(
                                 id="selection-label",
                                 style={
-                                    "fontWeight": "600",
                                     "marginTop": "4px",
                                     "color": "#1F2937",
+                                    "display": "flex",
+                                    "flexDirection": "column",
+                                    "gap": "2px",
                                 },
                             ),
                         ],
@@ -206,28 +266,25 @@ def build_dashboard_app() -> Dash:
 
     @app.callback(
         Output("selected-boundary", "data"),
-        Input("mode-toggle", "value"),
         Input("boundary-map", "clickData"),
+        State("mode-toggle", "value"),
         State("selected-boundary", "data"),
         prevent_initial_call=True,
     )
     def update_selected_boundary(
-        mode_value: BoundaryMode,
         click_data: dict | None,
+        mode_value: BoundaryMode,
         current_selection: dict | None,
     ) -> dict | None:
-        trigger = _triggered_id()
-        if trigger == "mode-toggle":
-            return None
-        if trigger != "boundary-map" or not click_data:
+        if not click_data:
             return current_selection
 
         points = click_data.get("points", [])
         if not points:
             return current_selection
-        selected_id = str(points[0].get("location"))
+        selected_id = _normalize_boundary_id(points[0].get("location"))
         selected_name = points[0].get("customdata") or selected_id
-        if selected_id in {"None", ""}:
+        if selected_id is None:
             return current_selection
         return {"id": selected_id, "name": str(selected_name), "mode": mode_value}
 
@@ -246,12 +303,16 @@ def build_dashboard_app() -> Dash:
         Input("selected-boundary", "data"),
         Input("date-range", "start_date"),
         Input("date-range", "end_date"),
+        Input("time-start", "value"),
+        Input("time-end", "value"),
     )
     def refresh_dashboard(
         mode_value: BoundaryMode,
         selected_boundary: dict | None,
         start_date: str | None,
         end_date: str | None,
+        start_time: str | None,
+        end_time: str | None,
     ):
         try:
             layer = boundaries.load(mode_value)
@@ -271,7 +332,7 @@ def build_dashboard_app() -> Dash:
                 mode_label = "neighborhood" if mode_value == "neighborhoods" else "police district"
                 return (
                     map_figure,
-                    f"Select a {mode_label} polygon to view metrics.",
+                    _selected_label_children(mode_value, f"(Select a {mode_label})"),
                     "N/A",
                     "N/A",
                     "N/A",
@@ -285,16 +346,58 @@ def build_dashboard_app() -> Dash:
             start_utc, end_utc = pacific_date_range_to_utc(start_date=start_date, end_date=end_date)
             if start_utc is None or end_utc is None:
                 return (
-                    map_figure,
-                    f"Selected: {selected_name}",
-                    "N/A",
-                    "N/A",
-                    "N/A",
-                    "N/A",
-                    "N/A",
-                    empty_histogram("311 Incidents by Service Name", "Select a valid date range."),
-                    empty_histogram("Police Incidents by Category", "Select a valid date range."),
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
                     "Date range is invalid.",
+                )
+            if start_utc >= end_utc:
+                return (
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    "Date range must have start before end.",
+                )
+            try:
+                local_start_time = _parse_local_time(start_time, dt.time(hour=0, minute=0))
+                local_end_time = _parse_local_time(end_time, dt.time(hour=23, minute=59))
+            except ValueError:
+                return (
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    "Time window is invalid. Use HH:MM format.",
+                )
+            if local_start_time > local_end_time:
+                return (
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    "Time window must have start before end.",
                 )
 
             cache_key = json.dumps(
@@ -303,6 +406,8 @@ def build_dashboard_app() -> Dash:
                     "boundary_id": selected_id,
                     "start_utc": start_utc.isoformat(),
                     "end_utc": end_utc.isoformat(),
+                    "local_start_time": local_start_time.isoformat(),
+                    "local_end_time": local_end_time.isoformat(),
                 },
                 sort_keys=True,
             )
@@ -313,6 +418,8 @@ def build_dashboard_app() -> Dash:
                     boundary_id=selected_id,
                     start_utc=start_utc,
                     end_utc=end_utc,
+                    local_start_time=local_start_time,
+                    local_end_time=local_end_time,
                 )
                 metrics_cache.set(cache_key, cached)
 
@@ -333,7 +440,7 @@ def build_dashboard_app() -> Dash:
 
             return (
                 map_figure,
-                f"Selected: {selected_name}",
+                _selected_label_children(mode_value, selected_name),
                 _format_int(totals.get("incidents_311_total")),
                 _format_int(totals.get("police_total")),
                 _format_int(totals.get("transit_arrivals_total")),
@@ -349,7 +456,7 @@ def build_dashboard_app() -> Dash:
             map_figure = build_boundary_map(mode_value, safe_layer, None)
             return (
                 map_figure,
-                "Unable to load selected boundary.",
+                _selected_label_children(mode_value, "(unavailable)"),
                 "N/A",
                 "N/A",
                 "N/A",
@@ -379,18 +486,28 @@ def _selection_for_mode(
         return None, None
     if selected_boundary.get("mode") != mode_value:
         return None, None
-    selected_id = str(selected_boundary.get("id"))
+    selected_id = _normalize_boundary_id(selected_boundary.get("id"))
+    if selected_id is None:
+        return None, None
     if selected_id not in layer.id_to_name:
         return None, None
     return selected_id, layer.id_to_name[selected_id]
 
-
-def _triggered_id() -> str | None:
-    from dash import callback_context
-
-    if not callback_context.triggered:
+def _normalize_boundary_id(raw_value: object) -> str | None:
+    if raw_value is None:
         return None
-    return callback_context.triggered[0]["prop_id"].split(".")[0]
+    text = str(raw_value).strip()
+    if not text or text.lower() == "none":
+        return None
+    # Plotly sometimes emits numeric IDs as floats (e.g., "53.0").
+    # Normalize integer-like values to stable string IDs used in GeoJSON.
+    try:
+        as_float = float(text)
+    except (TypeError, ValueError):
+        return text
+    if as_float.is_integer():
+        return str(int(as_float))
+    return text
 
 
 def _kpi_card_style() -> dict[str, str]:
