@@ -129,7 +129,11 @@ police AS (
 transit AS (
   SELECT
     COUNT(*) AS arrivals,
-    AVG(arrival_delay_sec) AS avg_delay_sec
+    APPROX_QUANTILES(arrival_delay_sec, 100)[OFFSET(50)] AS median_delay_sec,
+    SAFE_DIVIDE(
+      COUNTIF(arrival_delay_sec > 300),
+      COUNTIF(arrival_delay_sec IS NOT NULL)
+    ) * 100 AS pct_delay_over_300_sec
   FROM {self.config.table_id(self.config.table_trip_stops)} t
   JOIN {self.config.table_id(self.config.table_stops)} s
     ON t.stop_id = s.stop_id
@@ -142,7 +146,8 @@ SELECT
   incidents_311.cnt AS incidents_311_total,
   police.cnt AS police_total,
   transit.arrivals AS transit_arrivals_total,
-  transit.avg_delay_sec AS transit_avg_delay_sec
+  transit.median_delay_sec AS transit_median_delay_sec,
+  transit.pct_delay_over_300_sec AS transit_pct_delay_over_300_sec
 FROM incidents_311, police, transit
 """
         rows = self._run_query(
@@ -158,7 +163,8 @@ FROM incidents_311, police, transit
                 "incidents_311_total": 0,
                 "police_total": 0,
                 "transit_arrivals_total": 0,
-                "transit_avg_delay_sec": None,
+                "transit_median_delay_sec": None,
+                "transit_pct_delay_over_300_sec": None,
             }
         return rows[0]
 

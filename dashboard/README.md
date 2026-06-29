@@ -23,7 +23,9 @@ This dashboard intentionally follows the locked MVP contract from the planning d
    - Geometry is used only for rendering/click interactions.
    - WKT conversion is performed in BigQuery via `SAFE.ST_GEOGFROMTEXT` + `ST_ASGEOJSON`.
 4. **Transit metric contract**
-   - Transit metric uses `AVG(arrival_delay_sec)`.
+   - Transit delay KPIs use `arrival_delay_sec` from GTFS-RT TripUpdates.
+   - Primary KPI is median delay, displayed in minutes with early/late direction.
+   - Secondary KPI is percent of delays over 5 minutes (`arrival_delay_sec > 300`).
    - Transit aggregation joins `trip_stops` to `stops` on `stop_id`.
 
 ## App structure

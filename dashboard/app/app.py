@@ -37,10 +37,21 @@ def _format_int(value: int | None) -> str:
     return f"{int(value):,}"
 
 
-def _format_float(value: float | None) -> str:
+def _format_delay_minutes_with_direction(value_sec: float | None) -> str:
+    if value_sec is None:
+        return "N/A"
+    value_sec = float(value_sec)
+    if abs(value_sec) < 0.5:
+        return "0.0 min on time"
+    direction = "late" if value_sec > 0 else "early"
+    minutes = abs(value_sec) / 60.0
+    return f"{minutes:.1f} min {direction}"
+
+
+def _format_percent(value: float | None) -> str:
     if value is None:
         return "N/A"
-    return f"{float(value):.2f}"
+    return f"{float(value):.1f}%"
 
 
 def build_dashboard_app() -> Dash:
@@ -133,13 +144,20 @@ def build_dashboard_app() -> Dash:
                     ),
                     html.Div(
                         [
-                            html.Div("Avg Arrival Delay (sec)", style={"color": "#4B5563"}),
-                            html.Div(id="kpi-transit-delay", style={"fontSize": "28px"}),
+                            html.Div("Median Arrival Delay", style={"color": "#4B5563"}),
+                            html.Div(id="kpi-transit-delay-median", style={"fontSize": "28px"}),
+                        ],
+                        style=_kpi_card_style(),
+                    ),
+                    html.Div(
+                        [
+                            html.Div("% Delays > 5 min", style={"color": "#4B5563"}),
+                            html.Div(id="kpi-transit-delay-over5", style={"fontSize": "28px"}),
                         ],
                         style=_kpi_card_style(),
                     ),
                 ],
-                style={"display": "grid", "gridTemplateColumns": "repeat(4, minmax(150px, 1fr))", "gap": "12px"},
+                style={"display": "grid", "gridTemplateColumns": "repeat(5, minmax(150px, 1fr))", "gap": "12px"},
             ),
             html.Div(
                 [
@@ -187,7 +205,8 @@ def build_dashboard_app() -> Dash:
         Output("kpi-311-total", "children"),
         Output("kpi-police-total", "children"),
         Output("kpi-transit-total", "children"),
-        Output("kpi-transit-delay", "children"),
+        Output("kpi-transit-delay-median", "children"),
+        Output("kpi-transit-delay-over5", "children"),
         Output("hist-311", "figure"),
         Output("hist-police", "figure"),
         Output("error-message", "children"),
@@ -225,6 +244,7 @@ def build_dashboard_app() -> Dash:
                     "N/A",
                     "N/A",
                     "N/A",
+                    "N/A",
                     empty_histogram("311 Incidents by Service Name", "No boundary selected."),
                     empty_histogram("Police Incidents by Category", "No boundary selected."),
                     "",
@@ -235,6 +255,7 @@ def build_dashboard_app() -> Dash:
                 return (
                     map_figure,
                     f"Selected: {selected_name}",
+                    "N/A",
                     "N/A",
                     "N/A",
                     "N/A",
@@ -284,7 +305,8 @@ def build_dashboard_app() -> Dash:
                 _format_int(totals.get("incidents_311_total")),
                 _format_int(totals.get("police_total")),
                 _format_int(totals.get("transit_arrivals_total")),
-                _format_float(totals.get("transit_avg_delay_sec")),
+                _format_delay_minutes_with_direction(totals.get("transit_median_delay_sec")),
+                _format_percent(totals.get("transit_pct_delay_over_300_sec")),
                 hist_311_figure,
                 hist_police_figure,
                 "",
@@ -296,6 +318,7 @@ def build_dashboard_app() -> Dash:
             return (
                 map_figure,
                 "Unable to load selected boundary.",
+                "N/A",
                 "N/A",
                 "N/A",
                 "N/A",
