@@ -9,6 +9,7 @@ This folder keeps job-specific runtime config in one place while using one share
 - `parse_vehiclepositions.env.yaml`: env vars for VehiclePositions latest parse (`parse_vehiclepositions_day_to_parquet.py`)
 - `join_tripupdates_vehiclepositions.env.yaml`: env vars for daily join job (`join_tripupdates_vehiclepositions_day_to_parquet.py`)
 - `upsert_joined_to_bigquery.env.yaml`: env vars for daily BigQuery upsert (`upsert_joined_day_to_bigquery.py`)
+- `upsert_stops_to_bigquery.env.yaml`: env vars for stops dimension upsert (`upsert_stops_to_bigquery.py`)
 - `deploy_job.sh`: helper to create/update a Cloud Run Job for a specific script
 - `run_job.sh`: helper to execute a Cloud Run Job with optional CLI args override
 
@@ -63,4 +64,14 @@ bash transit/app/jobs/deploy_job.sh \
   --script "upsert_joined_day_to_bigquery.py" \
   --env-file "transit/app/jobs/upsert_joined_to_bigquery.env.yaml" \
   --args-csv "--gcs-bucket=511_transit_data,--source-gcs-prefix=latest/joined,--service-date=2026-06-23,--bq-project=neighboorhood-nachos,--bq-dataset=transit,--bq-table=tripupdates_vehiclepositions_joined,--bq-location=US"
+
+# Deploy stops dimension upsert (511 Stops API -> BigQuery)
+bash transit/app/jobs/deploy_job.sh \
+  --project "$PROJECT_ID" \
+  --region "us-central1" \
+  --job "stops-upsert-bigquery" \
+  --image "$IMAGE" \
+  --script "upsert_stops_to_bigquery.py" \
+  --env-file "transit/app/jobs/upsert_stops_to_bigquery.env.yaml" \
+  --args-csv "--api-key=<511_api_key>,--agencies=muni:SF,bart:BA,--bq-project=neighboorhood-nachos,--bq-dataset=neighborhood_livability_data,--bq-table=stops,--bq-location=us-central1,--neighborhoods-table=neighborhoods,--police-districts-table=police_districts"
 ```
