@@ -35,7 +35,7 @@ Each subproject is structured roughly as:
 | Resource | Identifier |
 |---|---|
 | GCP project | `neighboorhood-nachos` |
-| Default region | `us-west1` |
+| Default region | `us-east1` |
 | BigQuery dataset | `neighborhood_livability_data` |
 
 All Cloud Run Jobs authenticate via attached service accounts and
