@@ -4,7 +4,7 @@ import datetime as dt
 import json
 import logging
 
-from dash import Dash, Input, Output, State, dcc, html, no_update
+from dash import Dash, Input, Output, State, dcc, html
 
 from .bigquery_client import create_client
 from .boundaries import BoundaryLayer, BoundaryService
@@ -86,78 +86,110 @@ def build_dashboard_app() -> Dash:
                 [
                     html.Div(
                         [
-                            html.Label("Boundary mode"),
-                            dcc.RadioItems(
-                                id="mode-toggle",
-                                options=[
-                                    {"label": "Neighborhoods", "value": "neighborhoods"},
-                                    {"label": "Police Districts", "value": "police_districts"},
+                            html.Div(
+                                [
+                                    html.Label("Boundary mode", style={"fontWeight": "600"}),
+                                    dcc.RadioItems(
+                                        id="mode-toggle",
+                                        options=[
+                                            {"label": "Neighborhoods", "value": "neighborhoods"},
+                                            {"label": "Police Districts", "value": "police_districts"},
+                                        ],
+                                        value="neighborhoods",
+                                    ),
                                 ],
-                                value="neighborhoods",
-                                inline=True,
+                                style={"display": "flex", "flexDirection": "column", "gap": "8px"},
+                            ),
+                            html.Div(
+                                [
+                                    html.Label("Date range (Pacific Time)", style={"fontWeight": "600"}),
+                                    dcc.DatePickerRange(
+                                        id="date-range",
+                                        start_date=default_start_date,
+                                        end_date=default_end_date,
+                                        display_format="YYYY-MM-DD",
+                                    ),
+                                ],
+                                style={"display": "flex", "flexDirection": "column", "gap": "8px"},
+                            ),
+                            html.Div(
+                                id="selection-label",
+                                style={
+                                    "fontWeight": "600",
+                                    "marginTop": "4px",
+                                    "color": "#1F2937",
+                                },
                             ),
                         ],
-                        style={"minWidth": "300px"},
+                        style={
+                            "display": "flex",
+                            "flexDirection": "column",
+                            "gap": "16px",
+                            "flex": "0 0 250px",
+                            "padding": "10px",
+                            "border": "1px solid #E5E7EB",
+                            "borderRadius": "6px",
+                            "backgroundColor": "#FFFFFF",
+                            "height": "500px",
+                        },
                     ),
                     html.Div(
                         [
-                            html.Label("Date range (Pacific Time)"),
-                            dcc.DatePickerRange(
-                                id="date-range",
-                                start_date=default_start_date,
-                                end_date=default_end_date,
-                                display_format="YYYY-MM-DD",
+                            dcc.Loading(
+                                dcc.Graph(id="boundary-map", style={"height": "500px"}),
+                                type="default",
+                            )
+                        ],
+                        style={"flex": "1 1 50%", "minWidth": "460px"},
+                    ),
+                    html.Div(
+                        [
+                            html.Div(
+                                [
+                                    html.Div("311 Incidents", style={"color": "#4B5563"}),
+                                    html.Div(id="kpi-311-total", style={"fontSize": "24px"}),
+                                ],
+                                style=_kpi_card_style(),
+                            ),
+                            html.Div(
+                                [
+                                    html.Div("Police Incidents", style={"color": "#4B5563"}),
+                                    html.Div(id="kpi-police-total", style={"fontSize": "24px"}),
+                                ],
+                                style=_kpi_card_style(),
+                            ),
+                            html.Div(
+                                [
+                                    html.Div("Transit Stop Arrivals", style={"color": "#4B5563"}),
+                                    html.Div(id="kpi-transit-total", style={"fontSize": "24px"}),
+                                ],
+                                style=_kpi_card_style(),
+                            ),
+                            html.Div(
+                                [
+                                    html.Div("Median Arrival Delay", style={"color": "#4B5563"}),
+                                    html.Div(id="kpi-transit-delay-median", style={"fontSize": "24px"}),
+                                ],
+                                style=_kpi_card_style(),
+                            ),
+                            html.Div(
+                                [
+                                    html.Div("% Delays > 5 min", style={"color": "#4B5563"}),
+                                    html.Div(id="kpi-transit-delay-over5", style={"fontSize": "24px"}),
+                                ],
+                                style=_kpi_card_style(),
                             ),
                         ],
-                        style={"minWidth": "360px"},
+                        style={
+                            "display": "flex",
+                            "flexDirection": "column",
+                            "gap": "8px",
+                            "flex": "0 0 300px",
+                            "height": "500px",
+                        },
                     ),
                 ],
-                style={"display": "flex", "gap": "24px", "flexWrap": "wrap"},
-            ),
-            html.Div(id="selection-label", style={"fontWeight": "600", "marginTop": "12px"}),
-            dcc.Loading(
-                dcc.Graph(id="boundary-map", style={"height": "560px"}),
-                type="default",
-            ),
-            html.Div(
-                [
-                    html.Div(
-                        [
-                            html.Div("311 Incidents", style={"color": "#4B5563"}),
-                            html.Div(id="kpi-311-total", style={"fontSize": "28px"}),
-                        ],
-                        style=_kpi_card_style(),
-                    ),
-                    html.Div(
-                        [
-                            html.Div("Police Incidents", style={"color": "#4B5563"}),
-                            html.Div(id="kpi-police-total", style={"fontSize": "28px"}),
-                        ],
-                        style=_kpi_card_style(),
-                    ),
-                    html.Div(
-                        [
-                            html.Div("Transit Stop Arrivals", style={"color": "#4B5563"}),
-                            html.Div(id="kpi-transit-total", style={"fontSize": "28px"}),
-                        ],
-                        style=_kpi_card_style(),
-                    ),
-                    html.Div(
-                        [
-                            html.Div("Median Arrival Delay", style={"color": "#4B5563"}),
-                            html.Div(id="kpi-transit-delay-median", style={"fontSize": "28px"}),
-                        ],
-                        style=_kpi_card_style(),
-                    ),
-                    html.Div(
-                        [
-                            html.Div("% Delays > 5 min", style={"color": "#4B5563"}),
-                            html.Div(id="kpi-transit-delay-over5", style={"fontSize": "28px"}),
-                        ],
-                        style=_kpi_card_style(),
-                    ),
-                ],
-                style={"display": "grid", "gridTemplateColumns": "repeat(5, minmax(150px, 1fr))", "gap": "12px"},
+                style={"display": "flex", "gap": "12px", "alignItems": "stretch"},
             ),
             html.Div(
                 [
@@ -364,9 +396,13 @@ def _triggered_id() -> str | None:
 def _kpi_card_style() -> dict[str, str]:
     return {
         "border": "1px solid #E5E7EB",
-        "borderRadius": "8px",
-        "padding": "10px 12px",
+        "borderRadius": "6px",
+        "padding": "8px 10px",
         "backgroundColor": "#F9FAFB",
+        "flex": "1 1 0",
+        "display": "flex",
+        "flexDirection": "column",
+        "justifyContent": "center",
     }
 
 

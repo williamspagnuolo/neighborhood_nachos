@@ -8,7 +8,7 @@ from .boundaries import BoundaryLayer
 from .queries import BoundaryMode
 
 MAP_CENTER = {"lat": 37.7749, "lon": -122.4194}
-MAP_ZOOM = 10.3
+MAP_ZOOM = 10.65
 
 
 def build_boundary_map(
@@ -56,8 +56,9 @@ def build_boundary_map(
 
 def empty_histogram(title: str, message: str) -> go.Figure:
     fig = go.Figure()
+    title_text = _with_top10_subtitle(title)
     fig.update_layout(
-        title=title,
+        title=title_text,
         xaxis={"visible": False},
         yaxis={"visible": False},
         annotations=[
@@ -76,15 +77,22 @@ def empty_histogram(title: str, message: str) -> go.Figure:
 
 
 def build_histogram(title: str, rows: list[dict[str, Any]]) -> go.Figure:
-    x_values = [str(row["category"]) for row in rows]
-    y_values = [int(row["category_count"]) for row in rows]
+    top_rows = rows[:10]
+    x_values = [str(row["category"]) for row in top_rows]
+    y_values = [int(row["category_count"]) for row in top_rows]
 
     fig = go.Figure(go.Bar(x=x_values, y=y_values, marker_color="#2563EB"))
     fig.update_layout(
-        title=title,
+        title=_with_top10_subtitle(title),
         xaxis_title="Category",
         yaxis_title="Count",
         margin={"l": 40, "r": 20, "t": 45, "b": 80},
     )
     fig.update_xaxes(categoryorder="total descending", tickangle=-35)
     return fig
+
+
+def _with_top10_subtitle(title: str) -> str:
+    if "<sup>" in title:
+        return title
+    return f"{title}<br><sup>Top 10 categories by count</sup>"
