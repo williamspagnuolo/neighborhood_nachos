@@ -88,3 +88,4 @@ Rental listing ingestion. See `rents/` for details.
 
 ## Schema Design
 
+![Database Schema](schema_design.png)
