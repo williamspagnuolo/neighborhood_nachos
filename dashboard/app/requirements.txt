@@ -1,0 +1,4 @@
+dash
+google-cloud-bigquery
+plotly
+gunicorn
