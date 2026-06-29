@@ -85,3 +85,6 @@ Rental listing ingestion. See `rents/` for details.
 - **`.env` and any local credential files stay gitignored.** Use Secret
   Manager for anything sensitive at deploy time, and ADC for local dev.
 - **Feature branches + PRs to `main`.** No direct pushes to `main`.
+
+## Schema Design
+
