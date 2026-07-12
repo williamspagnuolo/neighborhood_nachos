@@ -27,7 +27,7 @@ Environment variables:
     BQ_DATASET        Target BigQuery dataset (required)
     BQ_TABLE          Target BigQuery table (required)
     LOOKBACK_DAYS     How many days to process, ending at TARGET_DATE
-                      (or yesterday Pacific). Default: 1.
+                      (or yesterday Pacific). Default: 10.
     TARGET_DATE       Optional YYYY-MM-DD end date for the window.
                       Default: yesterday in Pacific time.
 
@@ -46,7 +46,7 @@ BUCKET_NAME = os.environ["BUCKET_NAME"]
 BQ_PROJECT_ID = os.environ["BQ_PROJECT_ID"]
 BQ_DATASET = os.environ["BQ_DATASET"]
 BQ_TABLE = os.environ["BQ_TABLE"]
-LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "1"))
+LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "10"))
 
 NEIGHBORHOODS_TABLE = "neighborhoods"
 POLICE_DISTRICTS_TABLE = "police_districts"

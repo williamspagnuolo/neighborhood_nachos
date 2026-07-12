@@ -11,7 +11,7 @@ Environment variables:
     BUCKET_NAME       GCS bucket to write to (required)
     DATA_GOV_API_KEY  Socrata app token (required)
     LOOKBACK_DAYS     How many days to pull, ending at TARGET_DATE
-                      (or yesterday Pacific). Default: 1.
+                      (or yesterday Pacific). Default: 10.
     TARGET_DATE       Optional YYYY-MM-DD end date for the window.
                       Default: yesterday in Pacific time.
 
@@ -30,7 +30,7 @@ from google.cloud import storage
 
 BUCKET_NAME = os.environ["BUCKET_NAME"]
 APP_TOKEN = os.environ["DATA_GOV_API_KEY"]
-LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "1"))
+LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "10"))
 API_URL = "https://data.sfgov.org/resource/wg3w-h783.json"
 
 pacific_tz = pendulum.timezone("America/Los_Angeles")
