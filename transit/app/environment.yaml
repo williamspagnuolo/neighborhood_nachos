@@ -10,6 +10,7 @@ dependencies:
   - requests
   - pip
   - pip:
+      - Flask
       - gtfs-realtime-bindings
       - google-cloud-bigquery
       - google-cloud-storage
