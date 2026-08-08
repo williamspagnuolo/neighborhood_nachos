@@ -35,7 +35,8 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         help=(
             "511 API key. Defaults to STOPS_LOCATION_API_KEY (or "
-            "TRANSIT_511_API_KEY) env var."
+            "TRANSIT_511_API_KEY) env var. Use Secret Manager in Cloud Run; "
+            "avoid command-line values in deployed jobs."
         ),
     )
     parser.add_argument(
@@ -123,8 +124,16 @@ def _extract_stop_candidates(node: Any, out: list[dict[str, Any]]) -> None:
 
 def _fetch_stops_json(api_key: str, operator_id: str) -> dict[str, Any]:
     params = {"api_key": api_key, "operator_id": operator_id, "format": "json"}
-    response = requests.get(STOPS_ENDPOINT, params=params, timeout=120)
-    response.raise_for_status()
+    try:
+        response = requests.get(STOPS_ENDPOINT, params=params, timeout=120)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        status_code = exc.response.status_code if exc.response is not None else None
+        status_text = f" (HTTP {status_code})" if status_code is not None else ""
+        # Do not allow requests to include the api_key query parameter in logs.
+        raise RuntimeError(
+            f"511 stops request failed for operator {operator_id}{status_text}"
+        ) from None
     # 511 can return JSON with UTF-8 BOM; decode with utf-8-sig to avoid
     # JSONDecodeError: Unexpected UTF-8 BOM.
     return json.loads(response.content.decode("utf-8-sig"))
@@ -275,7 +284,10 @@ WHEN MATCHED THEN
 def main() -> None:
     args = build_parser().parse_args()
     if not args.api_key:
-        raise ValueError("Missing API key. Provide --api-key or TRANSIT_511_API_KEY.")
+        raise ValueError(
+            "Missing API key. Set TRANSIT_511_API_KEY through the environment "
+            "(Secret Manager in Cloud Run)."
+        )
     if not args.bq_project:
         raise ValueError("Missing --bq-project and GOOGLE_CLOUD_PROJECT is not set.")
 

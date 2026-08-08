@@ -1,20 +1,24 @@
 import argparse
-import datetime as dt
 import json
 import os
+import re
+import uuid
 from dataclasses import asdict, dataclass
 
 from google.api_core.exceptions import NotFound
 from google.cloud import bigquery
 from google.cloud import storage
 
-JOIN_KEYS = [
-    "agency_id",
-    "trip_id",
-    "direction_id",
-    "stop_sequence",
-    "trip_start_date",
-]
+from transit_job_config import (
+    default_source_date_utc,
+    env_bool,
+    env_value,
+    validate_job_args,
+)
+from transit_gcs_paths import derived_date_prefix
+from transit_row_identity import CANONICAL_ROW_KEY
+
+JOIN_KEYS = CANONICAL_ROW_KEY
 
 TARGET_COLUMN_TYPES = {
     "agency_id": "STRING",
@@ -74,14 +78,13 @@ SOURCE_TO_TARGET = {
 
 @dataclass
 class UpsertStats:
+    agency: str = ""
+    source_date: str = ""
+    staging_table: str = ""
     source_shard_count: int = 0
     stage_row_count: int = 0
     target_row_count_after_merge: int = 0
     merge_job_id: str = ""
-
-
-def default_service_date_utc() -> str:
-    return (dt.datetime.now(dt.timezone.utc).date() - dt.timedelta(days=1)).isoformat()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -91,44 +94,106 @@ def build_parser() -> argparse.ArgumentParser:
             "upsert into a target table."
         )
     )
-    parser.add_argument("--gcs-bucket", required=True, help="Source GCS bucket name.")
+    parser.add_argument(
+        "--gcs-bucket",
+        default=env_value("TRANSIT_BUCKET"),
+        help="Source GCS bucket name (default TRANSIT_BUCKET).",
+    )
+    parser.add_argument(
+        "--agency",
+        default=env_value("TRANSIT_AGENCY", "muni"),
+        help="Agency name (default TRANSIT_AGENCY or muni).",
+    )
     parser.add_argument(
         "--source-gcs-prefix",
-        default="latest/joined",
-        help="Source prefix before /<service-date>/ in GCS.",
+        default=env_value("TRANSIT_JOINED_PREFIX", "latest/joined"),
+        help="Source prefix before /<agency>/<service-date>/ in GCS.",
     )
     parser.add_argument(
         "--service-date",
-        default=default_service_date_utc(),
-        help="Service date (YYYY-MM-DD). Reads from <source-gcs-prefix>/<service-date>/",
+        default=env_value("TRANSIT_SOURCE_DATE", default_source_date_utc()),
+        help=(
+            "UTC source folder date (YYYY-MM-DD). Defaults to TRANSIT_SOURCE_DATE "
+            "or yesterday UTC."
+        ),
     )
     parser.add_argument(
         "--bq-project",
-        default=os.environ.get("GOOGLE_CLOUD_PROJECT", ""),
-        help="BigQuery project ID (defaults to GOOGLE_CLOUD_PROJECT).",
+        default=env_value(
+            "TRANSIT_BQ_PROJECT", env_value("GOOGLE_CLOUD_PROJECT")
+        ),
+        help=(
+            "BigQuery project ID (default TRANSIT_BQ_PROJECT or "
+            "GOOGLE_CLOUD_PROJECT)."
+        ),
     )
-    parser.add_argument("--bq-dataset", required=True, help="BigQuery dataset name.")
-    parser.add_argument("--bq-table", required=True, help="BigQuery target table name.")
     parser.add_argument(
-        "--bq-staging-table",
-        default="",
-        help="BigQuery staging table name (defaults to <bq-table>__stage).",
+        "--bq-dataset",
+        default=env_value("TRANSIT_BQ_DATASET"),
+        help="BigQuery dataset name (default TRANSIT_BQ_DATASET).",
+    )
+    parser.add_argument(
+        "--bq-table",
+        default=env_value("TRANSIT_BQ_TABLE"),
+        help="BigQuery target table name (default TRANSIT_BQ_TABLE).",
     )
     parser.add_argument(
         "--bq-location",
-        default="US",
+        default=env_value("TRANSIT_BQ_LOCATION", "US"),
         help="BigQuery location for load/query jobs, e.g. US or us-central1.",
     )
     parser.add_argument(
         "--drop-staging-after-merge",
         action="store_true",
+        default=env_bool("TRANSIT_DROP_STAGING_AFTER_MERGE"),
         help="Delete staging table after successful merge.",
     )
     return parser
 
 
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return validate_job_args(
+        parser,
+        args,
+        required=[
+            ("gcs_bucket", "--gcs-bucket/TRANSIT_BUCKET"),
+            ("source_gcs_prefix", "--source-gcs-prefix"),
+            ("bq_project", "--bq-project/TRANSIT_BQ_PROJECT"),
+            ("bq_dataset", "--bq-dataset/TRANSIT_BQ_DATASET"),
+            ("bq_table", "--bq-table/TRANSIT_BQ_TABLE"),
+            ("bq_location", "--bq-location/TRANSIT_BQ_LOCATION"),
+        ],
+    )
+
+
 def _quote_table(project: str, dataset: str, table: str) -> str:
     return f"`{project}.{dataset}.{table}`"
+
+
+def _sanitize_table_component(value: str, fallback: str) -> str:
+    sanitized = re.sub(r"[^A-Za-z0-9_]", "_", value.strip())
+    sanitized = sanitized.strip("_")
+    if not sanitized:
+        sanitized = fallback
+    if sanitized[0].isdigit():
+        sanitized = f"x_{sanitized}"
+    return sanitized
+
+
+def build_staging_table_name(
+    target_table: str, agency: str, execution_id: str | None = None
+) -> str:
+    """Return one BigQuery-safe staging table name for a loader execution."""
+    execution = (execution_id or os.environ.get("CLOUD_RUN_EXECUTION", "")).strip()
+    if not execution:
+        execution = uuid.uuid4().hex
+    target_component = _sanitize_table_component(target_table, "transit")
+    agency_component = _sanitize_table_component(agency, "agency")
+    execution_component = _sanitize_table_component(execution, "execution")
+    name = f"{target_component}__stage_{agency_component}_{execution_component}"
+    return name[:1024]
 
 
 def _ensure_source_parquet_exists(
@@ -171,6 +236,45 @@ def _null_safe_join_predicate(keys: list[str]) -> str:
             for col in keys
         ]
     )
+
+
+def _build_duplicate_key_count_sql(
+    project: str, dataset: str, stage_table: str, stage_columns: list[str]
+) -> str:
+    missing_keys = [key for key in JOIN_KEYS if key not in stage_columns]
+    if missing_keys:
+        raise ValueError(
+            f"Stage table missing required columns for canonical key: {missing_keys}"
+        )
+    key_sql = ", ".join(f"`{key}`" for key in JOIN_KEYS)
+    return f"""
+SELECT COUNT(*) AS duplicate_key_group_count
+FROM (
+  SELECT {key_sql}
+  FROM {_quote_table(project, dataset, stage_table)}
+  GROUP BY {key_sql}
+  HAVING COUNT(*) > 1
+)
+""".strip()
+
+
+def _assert_stage_has_unique_canonical_keys(
+    bq_client: bigquery.Client,
+    project: str,
+    dataset: str,
+    stage_table: str,
+    stage_columns: list[str],
+) -> None:
+    query_job = bq_client.query(
+        _build_duplicate_key_count_sql(project, dataset, stage_table, stage_columns)
+    )
+    result = next(iter(query_job.result()))
+    duplicate_key_group_count = int(result["duplicate_key_group_count"])
+    if duplicate_key_group_count:
+        raise ValueError(
+            f"Stage table {project}.{dataset}.{stage_table} contains "
+            f"{duplicate_key_group_count:,} duplicate canonical key group(s)."
+        )
 
 
 def _build_merge_sql(
@@ -234,13 +338,13 @@ WHEN NOT MATCHED THEN
 
 
 def main() -> None:
-    args = build_parser().parse_args()
-    if not args.bq_project:
-        raise ValueError("Missing --bq-project and GOOGLE_CLOUD_PROJECT is not set.")
+    args = parse_args()
 
-    source_prefix = f"{args.source_gcs_prefix.strip('/')}/{args.service_date}/"
+    source_prefix = derived_date_prefix(
+        args.source_gcs_prefix, args.agency, args.service_date
+    )
     source_uri = f"gs://{args.gcs_bucket}/{source_prefix}*.parquet"
-    staging_table = args.bq_staging_table.strip() or f"{args.bq_table}__stage"
+    staging_table = build_staging_table_name(args.bq_table, args.agency)
 
     storage_client = storage.Client(project=args.bq_project)
     shard_count = _ensure_source_parquet_exists(
@@ -273,6 +377,13 @@ def main() -> None:
     )
 
     stage_columns = [field.name for field in stage_obj.schema]
+    _assert_stage_has_unique_canonical_keys(
+        bq_client=bq_client,
+        project=args.bq_project,
+        dataset=args.bq_dataset,
+        stage_table=staging_table,
+        stage_columns=stage_columns,
+    )
     merge_sql = _build_merge_sql(
         project=args.bq_project,
         dataset=args.bq_dataset,
@@ -286,6 +397,9 @@ def main() -> None:
     target_ref = f"{args.bq_project}.{args.bq_dataset}.{args.bq_table}"
     target_obj = bq_client.get_table(target_ref)
     stats = UpsertStats(
+        agency=args.agency,
+        source_date=args.service_date,
+        staging_table=staging_table,
         source_shard_count=shard_count,
         stage_row_count=stage_obj.num_rows,
         target_row_count_after_merge=target_obj.num_rows,

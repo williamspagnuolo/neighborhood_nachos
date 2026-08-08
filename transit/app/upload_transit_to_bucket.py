@@ -48,8 +48,16 @@ def fetch_gtfs_rt_feed(api_key, agency_id, feed_name):
     params = {"api_key": api_key, "agency": agency_id}
     headers = {"Accept": "application/x-protobuf"}
 
-    response = requests.get(url, params=params, headers=headers, timeout=60)
-    response.raise_for_status()
+    try:
+        response = requests.get(url, params=params, headers=headers, timeout=60)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        status_code = exc.response.status_code if exc.response is not None else None
+        status_text = f" (HTTP {status_code})" if status_code is not None else ""
+        # requests exceptions can include the prepared URL, including api_key.
+        raise RuntimeError(
+            f"511 {feed_name} request failed for agency {agency_id}{status_text}"
+        ) from None
     return response.content
 
 
@@ -187,7 +195,8 @@ def build_config_from_env():
             if not keys:
                 raise ValueError(
                     f"Missing API keys for {feed_name} {agency_name}. "
-                    f"Set {env_var_name} in .env."
+                    f"Provide {env_var_name} through the environment "
+                    "(Secret Manager in Cloud Run)."
                 )
     if not raw_bucket_name:
         raise ValueError(
