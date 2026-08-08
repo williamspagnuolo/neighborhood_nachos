@@ -1,0 +1,10 @@
+FROM --platform=linux/amd64 continuumio/miniconda3
+
+WORKDIR /app
+
+COPY . .
+RUN conda env create -f environment.yaml -n env_transit
+
+ENV PORT=8080
+
+CMD ["sh", "-c", "exec conda run --no-capture-output -n env_transit gunicorn --bind 0.0.0.0:${PORT} --workers 1 --threads 1 --timeout 120 transit_ingest_service:app"]

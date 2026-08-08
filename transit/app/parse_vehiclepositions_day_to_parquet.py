@@ -11,6 +11,16 @@ import pandas as pd
 from google.cloud import storage
 from google.transit import gtfs_realtime_pb2
 
+from transit_job_config import (
+    default_source_date_utc,
+    env_bool,
+    env_int,
+    env_value,
+    validate_job_args,
+)
+from transit_gcs_paths import clear_derived_date_prefix
+from transit_row_identity import CANONICAL_ROW_KEY, assert_unique_canonical_keys
+
 STAGE_COLUMNS = [
     "agency_id",
     "blob_order",
@@ -21,6 +31,7 @@ STAGE_COLUMNS = [
     "trip_id",
     "trip_start_date_raw",
     "trip_start_date",
+    "trip_start_time",
     "route_id",
     "direction_id",
     "stop_sequence",
@@ -37,6 +48,8 @@ STAGE_COLUMNS = [
 
 @dataclass
 class ParseStats:
+    agency: str = ""
+    source_date: str = ""
     blobs_total: int = 0
     blobs_selected: int = 0
     blobs_parsed: int = 0
@@ -53,10 +66,6 @@ def parse_snapshot_ts_from_blob_name(blob_name: str) -> pd.Timestamp:
     return pd.to_datetime(
         ts_text, format="%Y-%m-%dT%H-%M-%S.%fZ", utc=True, errors="coerce"
     )
-
-
-def default_service_date_utc() -> str:
-    return (dt.datetime.now(dt.timezone.utc).date() - dt.timedelta(days=1)).isoformat()
 
 
 def ensure_dir(path: str) -> None:
@@ -103,7 +112,6 @@ def _finalize_latest_df(df_stage: pd.DataFrame) -> pd.DataFrame:
     if df_stage.empty:
         return pd.DataFrame()
 
-    vp_key = ["agency_id", "trip_id", "direction_id", "stop_sequence"]
     vp_for_latest = df_stage.dropna(
         subset=["trip_id", "stop_sequence", "vp_snapshot_ts"]
     ).copy()
@@ -111,8 +119,17 @@ def _finalize_latest_df(df_stage: pd.DataFrame) -> pd.DataFrame:
         vp_for_latest.sort_values(
             ["vp_snapshot_ts", "blob_order", "blob_name"], ascending=[True, True, True]
         )
-        .drop_duplicates(subset=vp_key, keep="last")
+        .drop_duplicates(subset=CANONICAL_ROW_KEY, keep="last")
         .reset_index(drop=True)
+    )
+
+
+def _raise_for_blob_failures(stats: ParseStats) -> None:
+    if not stats.blobs_failed:
+        return
+    raise RuntimeError(
+        f"VehiclePositions parsing failed for {stats.blobs_failed:,} blob(s) "
+        f"for agency={stats.agency}, source_date={stats.source_date}."
     )
 
 
@@ -163,6 +180,7 @@ def _write_and_upload_shards(
     output_gcs_prefix: str,
     agency: str,
     output_shards: int,
+    clear_source_date_prefix: bool = False,
 ) -> list[str]:
     if df.empty:
         return []
@@ -170,6 +188,19 @@ def _write_and_upload_shards(
     client = storage.Client()
     bucket = client.bucket(output_bucket_name)
     shard_count = max(1, int(output_shards))
+
+    if clear_source_date_prefix:
+        cleared_prefix, deleted_count = clear_derived_date_prefix(
+            storage_client=client,
+            bucket_name=output_bucket_name,
+            root=output_gcs_prefix,
+            agency=agency,
+            source_date=output_key,
+        )
+        print(
+            f"Cleared {deleted_count:,} existing derived object(s) under "
+            f"gs://{output_bucket_name}/{cleared_prefix}"
+        )
 
     if shard_count == 1:
         local_path = output_dir / f"{output_key}.parquet"
@@ -205,11 +236,21 @@ def build_parser() -> argparse.ArgumentParser:
             "composite key, and upload parquet output."
         )
     )
-    parser.add_argument("--bucket", required=True, help="GCS bucket name")
-    parser.add_argument("--agency", default="muni", help="Agency folder name")
+    parser.add_argument(
+        "--bucket",
+        default=env_value("TRANSIT_BUCKET"),
+        help="GCS bucket name (default TRANSIT_BUCKET)",
+    )
+    parser.add_argument(
+        "--agency",
+        default=env_value("TRANSIT_AGENCY", "muni"),
+        help="Agency folder name (default TRANSIT_AGENCY or muni)",
+    )
     parser.add_argument(
         "--source-root-prefix",
-        default="raw/VehiclePositions",
+        default=env_value(
+            "TRANSIT_VEHICLEPOSITIONS_RAW_PREFIX", "raw/VehiclePositions"
+        ),
         help=(
             "Source root path before agency/date, e.g. raw/VehiclePositions "
             "or VehiclePositions for legacy layout"
@@ -217,12 +258,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--service-date",
-        default=default_service_date_utc(),
-        help="Service date folder (YYYY-MM-DD), e.g. 2026-06-23",
+        default=env_value("TRANSIT_SOURCE_DATE", default_source_date_utc()),
+        help=(
+            "UTC source folder date (YYYY-MM-DD). Defaults to TRANSIT_SOURCE_DATE "
+            "or yesterday UTC."
+        ),
     )
     parser.add_argument(
         "--output-dir",
-        default="/tmp/vehiclepositions_latest",
+        default=env_value(
+            "TRANSIT_VEHICLEPOSITIONS_OUTPUT_DIR", "/tmp/vehiclepositions_latest"
+        ),
         help="Local working directory for temporary parquet and reports",
     )
     parser.add_argument(
@@ -239,7 +285,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--output-gcs-bucket",
-        default="",
+        default=env_value("TRANSIT_OUTPUT_BUCKET"),
         help=(
             "Optional destination bucket for uploaded parquet. "
             "If omitted, defaults to --bucket."
@@ -247,7 +293,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--output-gcs-prefix",
-        default="latest/VehiclePositions",
+        default=env_value(
+            "TRANSIT_VEHICLEPOSITIONS_PARQUET_PREFIX", "latest/VehiclePositions"
+        ),
         help="Destination prefix before agency/timestamp or date folder.",
     )
     parser.add_argument(
@@ -261,6 +309,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-use-service-date-folder",
         action="store_true",
+        default=env_bool("TRANSIT_USE_SOURCE_DATE_FOLDER"),
         help=(
             "Use service date (YYYY-MM-DD) as output folder/file key instead of run "
             "timestamp."
@@ -269,7 +318,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-shards",
         type=int,
-        default=1,
+        default=env_int("TRANSIT_VEHICLEPOSITIONS_OUTPUT_SHARDS", 1),
         help="Number of parquet files to upload. Use >1 for sharded output.",
     )
     parser.add_argument(
@@ -287,14 +336,29 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--parallel-finalize-timeout-seconds",
         type=int,
-        default=1800,
+        default=env_int("TRANSIT_PARALLEL_FINALIZE_TIMEOUT_SECONDS", 1800),
         help="How long leader task waits for all stage files in parallel mode.",
     )
     return parser
 
 
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return validate_job_args(
+        parser,
+        args,
+        required=[
+            ("bucket", "--bucket/TRANSIT_BUCKET"),
+            ("source_root_prefix", "--source-root-prefix"),
+            ("output_dir", "--output-dir"),
+            ("output_gcs_prefix", "--output-gcs-prefix"),
+        ],
+    )
+
+
 def main() -> None:
-    args = build_parser().parse_args()
+    args = parse_args()
     output_bucket_name = args.output_gcs_bucket.strip() or args.bucket
     task_index, task_count = _task_index_and_count(args.task_index, args.task_count)
     run_id = _run_id_from_context(args.output_file_timestamp)
@@ -309,7 +373,12 @@ def main() -> None:
     client = storage.Client()
     blobs = list(client.list_blobs(args.bucket, prefix=prefix))
 
-    stats = ParseStats(blobs_total=len(blobs), blobs_selected=len(blobs))
+    stats = ParseStats(
+        agency=args.agency,
+        source_date=args.service_date,
+        blobs_total=len(blobs),
+        blobs_selected=len(blobs),
+    )
     if not blobs:
         raise ValueError(f"No VehiclePositions blobs found for prefix: {prefix}")
 
@@ -375,6 +444,7 @@ def main() -> None:
                 trip_id = trip.trip_id if trip.trip_id else None
                 route_id = trip.route_id if trip.route_id else None
                 trip_start_date_raw = trip.start_date if trip.start_date else None
+                trip_start_time = trip.start_time if trip.start_time else None
                 trip_start_date = pd.to_datetime(
                     trip_start_date_raw, format="%Y%m%d", errors="coerce"
                 )
@@ -430,6 +500,7 @@ def main() -> None:
                     "trip_id": trip_id,
                     "trip_start_date_raw": trip_start_date_raw,
                     "trip_start_date": trip_start_date,
+                    "trip_start_time": trip_start_time,
                     "route_id": route_id,
                     "direction_id": direction_id,
                     "stop_sequence": stop_sequence,
@@ -448,12 +519,7 @@ def main() -> None:
                     and row["stop_sequence"] is not None
                     and pd.notna(row["vp_snapshot_ts"])
                 ):
-                    dedupe_key = (
-                        row["agency_id"],
-                        row["trip_id"],
-                        row["direction_id"],
-                        row["stop_sequence"],
-                    )
+                    dedupe_key = tuple(row[column] for column in CANONICAL_ROW_KEY)
                     current_sort_key = _latest_sort_key(
                         row["vp_snapshot_ts"], row["blob_order"], row["blob_name"]
                     )
@@ -475,6 +541,10 @@ def main() -> None:
                 f"Progress: {i:,}/{stats.blobs_selected:,} blobs, "
                 f"latest_keys={len(latest_rows_by_key):,}, failed={stats.blobs_failed:,}"
             )
+
+    if stats.blobs_failed:
+        print(json.dumps(asdict(stats), indent=2))
+        _raise_for_blob_failures(stats)
 
     task_latest_rows = [v[1] for v in latest_rows_by_key.values()]
     task_stage_df = pd.DataFrame(task_latest_rows, columns=STAGE_COLUMNS)
@@ -515,6 +585,13 @@ def main() -> None:
         stats.rows_latest = len(df_vp_latest)
         stats.rows_removed_by_dedupe = len(task_stage_df) - len(df_vp_latest)
 
+    if df_vp_latest.empty:
+        raise ValueError(
+            f"VehiclePositions parser produced zero rows for agency={args.agency}, "
+            f"source_date={args.service_date}."
+        )
+    assert_unique_canonical_keys(df_vp_latest, "VehiclePositions parser output")
+
     if args.output_use_service_date_folder:
         output_key = args.service_date
     else:
@@ -530,6 +607,7 @@ def main() -> None:
         output_gcs_prefix=args.output_gcs_prefix,
         agency=args.agency,
         output_shards=args.output_shards,
+        clear_source_date_prefix=args.output_use_service_date_folder,
     )
 
     report_path = Path(output_dir) / f"{output_key}_vehiclepositions_parse_report.json"

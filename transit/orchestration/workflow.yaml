@@ -1,0 +1,136 @@
+# One UTC source-date execution. Runtime input example:
+# {"source_date":"2026-06-23","agencies":["muni","bart"]}
+# The workflow identity needs run.jobs.runWithOverrides on these four jobs.
+main:
+  params: [input]
+  steps:
+    - initialize:
+        assign:
+          # map.get safely returns null if an execution supplies no input map.
+          # Do not use an inline {} literal inside a Workflows expression.
+          - input_map: ${input}
+          - project_id: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
+          - region: "us-central1"
+          - today_utc: ${text.substring(time.format(sys.now(), "UTC"), 0, 10)}
+          - default_source_date: ${text.substring(time.format(sys.now() - 86400, "UTC"), 0, 10)}
+          - source_date: ${default(map.get(input_map, "source_date"), default_source_date)}
+          - agencies: ${default(map.get(input_map, "agencies"), ["muni", "bart"])}
+          - results: []
+    - validate_date_shape:
+        switch:
+          - condition: ${not(text.match_regex(source_date, "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"))}
+            raise: ${"source_date must be a YYYY-MM-DD UTC raw-folder date; got " + source_date}
+    - parse_source_date:
+        call: time.parse
+        args:
+          value: ${source_date + "T00:00:00Z"}
+        result: source_date_timestamp
+    - parse_today_utc:
+        call: time.parse
+        args:
+          value: ${today_utc + "T00:00:00Z"}
+        result: today_utc_timestamp
+    - reject_today_or_future:
+        switch:
+          - condition: ${source_date_timestamp >= today_utc_timestamp}
+            raise: ${"source_date must be earlier than today in UTC (" + today_utc + "); got " + source_date}
+    - validate_agencies:
+        for:
+          value: agency
+          in: ${agencies}
+          steps:
+            - reject_unsupported_agency:
+                switch:
+                  - condition: ${not(agency in ["muni", "bart"])}
+                    raise: ${"agency must be muni or bart; got " + agency}
+    - run_agencies_sequentially:
+        for:
+          value: agency
+          in: ${agencies}
+          steps:
+            - process_one_agency:
+                call: process_agency
+                args:
+                  project_id: ${project_id}
+                  region: ${region}
+                  agency: ${agency}
+                  source_date: ${source_date}
+                result: agency_result
+            - append_result:
+                assign:
+                  - results: ${list.concat(results, agency_result)}
+    - finish:
+        return:
+          source_date: ${source_date}
+          agencies: ${results}
+
+process_agency:
+  params: [project_id, region, agency, source_date]
+  steps:
+    - run_parsers_in_parallel:
+        parallel:
+          branches:
+            - tripupdates_parser:
+                steps:
+                  - run_tripupdates_parser:
+                      call: run_job
+                      args:
+                        project_id: ${project_id}
+                        region: ${region}
+                        job_name: "tripupdates-parse-day"
+                        agency: ${agency}
+                        source_date: ${source_date}
+            - vehiclepositions_parser:
+                steps:
+                  - run_vehiclepositions_parser:
+                      call: run_job
+                      args:
+                        project_id: ${project_id}
+                        region: ${region}
+                        job_name: "vehiclepositions-parse-day"
+                        agency: ${agency}
+                        source_date: ${source_date}
+    - run_join:
+        call: run_job
+        args:
+          project_id: ${project_id}
+          region: ${region}
+          job_name: "tripupdates-vp-join-day"
+          agency: ${agency}
+          source_date: ${source_date}
+    - run_upsert:
+        call: run_job
+        args:
+          project_id: ${project_id}
+          region: ${region}
+          job_name: "joined-upsert-bigquery-day"
+          agency: ${agency}
+          source_date: ${source_date}
+    - return_agency_result:
+        return:
+          agency: ${agency}
+          source_date: ${source_date}
+          completed_stages:
+            - "tripupdates-parse-day"
+            - "vehiclepositions-parse-day"
+            - "tripupdates-vp-join-day"
+            - "joined-upsert-bigquery-day"
+
+run_job:
+  params: [project_id, region, job_name, agency, source_date]
+  steps:
+    - execute_cloud_run_job:
+        call: googleapis.run.v2.projects.locations.jobs.run
+        args:
+          name: ${"projects/" + project_id + "/locations/" + region + "/jobs/" + job_name}
+          body:
+            overrides:
+              containerOverrides:
+                - env:
+                    - name: "TRANSIT_SOURCE_DATE"
+                      value: ${source_date}
+                    - name: "TRANSIT_AGENCY"
+                      value: ${agency}
+        result: job_execution
+    - return_execution_name:
+        return: ${job_execution.name}

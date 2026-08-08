@@ -1,5 +1,4 @@
 import argparse
-import datetime as dt
 import json
 import os
 import tempfile
@@ -10,13 +9,20 @@ import pandas as pd
 from google.cloud import storage
 from google.cloud.storage.blob import Blob
 
-JOIN_KEYS = [
-    "agency_id",
-    "trip_id",
-    "direction_id",
-    "stop_sequence",
-    "trip_start_date",
-]
+from transit_job_config import (
+    default_source_date_utc,
+    env_int,
+    env_value,
+    validate_job_args,
+)
+from transit_gcs_paths import clear_derived_date_prefix, derived_date_prefix
+from transit_row_identity import (
+    CANONICAL_ROW_KEY,
+    assert_unique_canonical_keys,
+    require_columns,
+)
+
+JOIN_KEYS = CANONICAL_ROW_KEY
 
 VP_COLUMNS_TO_ADD = [
     "vp_snapshot_ts",
@@ -34,6 +40,8 @@ VP_COLUMNS_TO_ADD = [
 
 @dataclass
 class JoinStats:
+    agency: str = ""
+    source_date: str = ""
     tripupdates_shards_found: int = 0
     vehiclepositions_shards_found: int = 0
     tripupdates_rows: int = 0
@@ -44,10 +52,6 @@ class JoinStats:
     output_shards_written: int = 0
 
 
-def default_service_date_utc() -> str:
-    return (dt.datetime.now(dt.timezone.utc).date() - dt.timedelta(days=1)).isoformat()
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -55,45 +59,78 @@ def build_parser() -> argparse.ArgumentParser:
             "and upload sharded output."
         )
     )
-    parser.add_argument("--bucket", required=True, help="Input GCS bucket name")
-    parser.add_argument("--agency", default="muni", help="Agency folder name")
+    parser.add_argument(
+        "--bucket",
+        default=env_value("TRANSIT_BUCKET"),
+        help="Input GCS bucket name (default TRANSIT_BUCKET)",
+    )
+    parser.add_argument(
+        "--agency",
+        default=env_value("TRANSIT_AGENCY", "muni"),
+        help="Agency folder name (default TRANSIT_AGENCY or muni)",
+    )
     parser.add_argument(
         "--service-date",
-        default=default_service_date_utc(),
-        help="Service date (YYYY-MM-DD)",
+        default=env_value("TRANSIT_SOURCE_DATE", default_source_date_utc()),
+        help=(
+            "UTC source folder date (YYYY-MM-DD). Defaults to TRANSIT_SOURCE_DATE "
+            "or yesterday UTC."
+        ),
     )
     parser.add_argument(
         "--tripupdates-prefix",
-        default="latest/TripUpdates",
+        default=env_value(
+            "TRANSIT_TRIPUPDATES_PARQUET_PREFIX", "latest/TripUpdates"
+        ),
         help="Prefix before /<agency>/<service-date>/ for TripUpdates latest parquet",
     )
     parser.add_argument(
         "--vehiclepositions-prefix",
-        default="latest/VehiclePositions",
+        default=env_value(
+            "TRANSIT_VEHICLEPOSITIONS_PARQUET_PREFIX", "latest/VehiclePositions"
+        ),
         help="Prefix before /<agency>/<service-date>/ for VehiclePositions latest parquet",
     )
     parser.add_argument(
         "--output-gcs-bucket",
-        default="",
+        default=env_value("TRANSIT_OUTPUT_BUCKET"),
         help="Destination bucket for joined parquet output (defaults to --bucket).",
     )
     parser.add_argument(
         "--output-gcs-prefix",
-        default="latest/joined",
-        help="Destination prefix for joined output (service date is appended).",
+        default=env_value("TRANSIT_JOINED_PREFIX", "latest/joined"),
+        help="Destination prefix before /<agency>/<service-date>/ joined output.",
     )
     parser.add_argument(
         "--output-dir",
-        default="/tmp/tripupdates_vehiclepositions_join",
+        default=env_value(
+            "TRANSIT_JOIN_OUTPUT_DIR", "/tmp/tripupdates_vehiclepositions_join"
+        ),
         help="Local temp directory for downloaded and generated parquet files.",
     )
     parser.add_argument(
         "--output-shards",
         type=int,
-        default=16,
+        default=env_int("TRANSIT_JOIN_OUTPUT_SHARDS", 16),
         help="Number of output parquet shards.",
     )
     return parser
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return validate_job_args(
+        parser,
+        args,
+        required=[
+            ("bucket", "--bucket/TRANSIT_BUCKET"),
+            ("tripupdates_prefix", "--tripupdates-prefix"),
+            ("vehiclepositions_prefix", "--vehiclepositions-prefix"),
+            ("output_gcs_prefix", "--output-gcs-prefix"),
+            ("output_dir", "--output-dir"),
+        ],
+    )
 
 
 def ensure_dir(path: str) -> None:
@@ -109,7 +146,31 @@ def _normalize_join_key_types(df: pd.DataFrame) -> pd.DataFrame:
     out["trip_start_date"] = pd.to_datetime(
         out["trip_start_date"], errors="coerce"
     ).dt.strftime("%Y-%m-%d")
+    out["trip_start_time"] = out["trip_start_time"].astype("string")
     return out
+
+
+def _join_frames(df_tu: pd.DataFrame, df_vp: pd.DataFrame) -> pd.DataFrame:
+    require_columns(df_tu, JOIN_KEYS, "TripUpdates input")
+    require_columns(df_vp, JOIN_KEYS, "VehiclePositions input")
+
+    df_tu = _normalize_join_key_types(df_tu)
+    df_vp = _normalize_join_key_types(df_vp)
+    assert_unique_canonical_keys(df_tu, "TripUpdates input")
+    assert_unique_canonical_keys(df_vp, "VehiclePositions input")
+
+    vp_cols_available = [column for column in VP_COLUMNS_TO_ADD if column in df_vp.columns]
+    df_vp_joinable = df_vp[JOIN_KEYS + vp_cols_available].copy()
+    df_joined = df_tu.merge(
+        df_vp_joinable, on=JOIN_KEYS, how="left", validate="one_to_one"
+    )
+    if len(df_joined) != len(df_tu):
+        raise RuntimeError(
+            "Join row count does not match TripUpdates input: "
+            f"{len(df_joined):,} joined rows vs {len(df_tu):,} TripUpdates rows."
+        )
+    assert_unique_canonical_keys(df_joined, "Joined output")
+    return df_joined
 
 
 def _list_parquet_blobs_for_day(
@@ -164,6 +225,7 @@ def _write_and_upload_shards(
     output_dir: Path,
     output_bucket_name: str,
     output_gcs_prefix: str,
+    agency: str,
     service_date: str,
     output_shards: int,
 ) -> list[str]:
@@ -173,7 +235,17 @@ def _write_and_upload_shards(
     client = storage.Client()
     bucket = client.bucket(output_bucket_name)
     shard_count = max(1, int(output_shards))
-    run_prefix = f"{output_gcs_prefix.strip('/')}/{service_date}"
+    run_prefix, deleted_count = clear_derived_date_prefix(
+        storage_client=client,
+        bucket_name=output_bucket_name,
+        root=output_gcs_prefix,
+        agency=agency,
+        source_date=service_date,
+    )
+    print(
+        f"Cleared {deleted_count:,} existing derived object(s) under "
+        f"gs://{output_bucket_name}/{run_prefix}"
+    )
 
     uploaded_paths: list[str] = []
     for shard_idx in range(shard_count):
@@ -183,7 +255,7 @@ def _write_and_upload_shards(
         shard_name = f"part-{shard_idx:05d}.parquet"
         local_path = output_dir / shard_name
         shard_df.to_parquet(local_path, index=False)
-        gcs_blob_path = f"{run_prefix}/{shard_name}"
+        gcs_blob_path = f"{run_prefix}{shard_name}"
         bucket.blob(gcs_blob_path).upload_from_filename(
             str(local_path), content_type="application/octet-stream"
         )
@@ -193,7 +265,7 @@ def _write_and_upload_shards(
 
 
 def main() -> None:
-    args = build_parser().parse_args()
+    args = parse_args()
     output_bucket_name = args.output_gcs_bucket.strip() or args.bucket
 
     output_dir = Path(os.path.abspath(args.output_dir))
@@ -242,31 +314,7 @@ def main() -> None:
     if df_vp.empty:
         raise ValueError("VehiclePositions dataframe is empty after loading parquet inputs.")
 
-    missing_tu_cols = [c for c in JOIN_KEYS if c not in df_tu.columns]
-    missing_vp_cols = [c for c in JOIN_KEYS if c not in df_vp.columns]
-    if missing_tu_cols:
-        raise ValueError(f"TripUpdates input missing join columns: {missing_tu_cols}")
-    if missing_vp_cols:
-        raise ValueError(f"VehiclePositions input missing join columns: {missing_vp_cols}")
-
-    df_tu = _normalize_join_key_types(df_tu)
-    df_vp = _normalize_join_key_types(df_vp)
-
-    vp_cols_available = [c for c in VP_COLUMNS_TO_ADD if c in df_vp.columns]
-    df_vp_joinable = df_vp[JOIN_KEYS + vp_cols_available].copy()
-    if "vp_snapshot_ts" in df_vp_joinable.columns:
-        df_vp_joinable["vp_snapshot_ts"] = pd.to_datetime(
-            df_vp_joinable["vp_snapshot_ts"], utc=True, errors="coerce"
-        )
-    df_vp_joinable = (
-        df_vp_joinable.sort_values(
-            ["vp_snapshot_ts"] if "vp_snapshot_ts" in df_vp_joinable.columns else JOIN_KEYS
-        )
-        .drop_duplicates(subset=JOIN_KEYS, keep="last")
-        .reset_index(drop=True)
-    )
-
-    df_joined = df_tu.merge(df_vp_joinable, on=JOIN_KEYS, how="left")
+    df_joined = _join_frames(df_tu, df_vp)
     if "latest_snapshot_ts" in df_joined.columns and "vp_snapshot_ts" in df_joined.columns:
         df_joined["latest_snapshot_ts"] = pd.to_datetime(
             df_joined["latest_snapshot_ts"], utc=True, errors="coerce"
@@ -280,6 +328,7 @@ def main() -> None:
         output_dir=output_dir,
         output_bucket_name=output_bucket_name,
         output_gcs_prefix=args.output_gcs_prefix,
+        agency=args.agency,
         service_date=args.service_date,
         output_shards=args.output_shards,
     )
@@ -293,11 +342,13 @@ def main() -> None:
         else 0.0
     )
     stats = JoinStats(
+        agency=args.agency,
+        source_date=args.service_date,
         tripupdates_shards_found=len(tu_blobs),
         vehiclepositions_shards_found=len(vp_blobs),
         tripupdates_rows=len(df_tu),
         vehiclepositions_rows=len(df_vp),
-        vehiclepositions_rows_after_key_dedupe=len(df_vp_joinable),
+        vehiclepositions_rows_after_key_dedupe=len(df_vp),
         joined_rows=len(df_joined),
         vehicle_match_rate=match_rate,
         output_shards_written=len(uploaded_paths),
@@ -310,7 +361,8 @@ def main() -> None:
     print("Join complete.")
     print(
         f"Uploaded {len(uploaded_paths):,} shard(s) under "
-        f"gs://{output_bucket_name}/{args.output_gcs_prefix.strip('/')}/{args.service_date}/"
+        f"gs://{output_bucket_name}/"
+        f"{derived_date_prefix(args.output_gcs_prefix, args.agency, args.service_date)}"
     )
     print(f"Local report: {report_path}")
     print(json.dumps(asdict(stats), indent=2))
