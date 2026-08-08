@@ -2,3 +2,5 @@ dash
 google-cloud-bigquery
 plotly
 gunicorn
+google-genai
+sqlglot

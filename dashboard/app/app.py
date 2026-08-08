@@ -3,8 +3,9 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+from typing import Any
 
-from dash import Dash, Input, Output, State, dcc, html, no_update
+from dash import Dash, Input, Output, State, dash_table, dcc, html, no_update
 
 from .bigquery_client import create_client
 from .boundaries import BoundaryLayer, BoundaryService
@@ -12,6 +13,11 @@ from .cache import TTLCache
 from .config import AppConfig
 from .figures import build_boundary_map, build_histogram, empty_histogram
 from .queries import BoundaryMode, DashboardQueries
+from .text_to_sql import (
+    AgentError,
+    TextToSqlAgent,
+    format_bytes,
+)
 from .time_utils import PACIFIC_TZ, pacific_date_range_to_utc, utc_to_pacific_date
 
 logging.basicConfig(
@@ -86,6 +92,16 @@ def build_dashboard_app() -> Dash:
         max_entries=config.cache_max_entries,
     )
 
+    agent: TextToSqlAgent | None = None
+    if config.agent_enabled:
+        try:
+            agent = TextToSqlAgent.create(config=config, bq_client=bq_client)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning(
+                "Text-to-SQL agent unavailable, tab will show a friendly error: %s",
+                exc,
+            )
+
     try:
         default_start_date, default_end_date, min_allowed_date, max_allowed_date = _default_date_range(
             queries=queries
@@ -102,7 +118,7 @@ def build_dashboard_app() -> Dash:
     app = Dash(__name__)
     app.title = "SF Interactive Dashboard"
 
-    app.layout = html.Div(
+    dashboard_tab_layout = html.Div(
         [
             html.H1("San Francisco Livability Dashboard"),
             html.P(
@@ -262,6 +278,22 @@ def build_dashboard_app() -> Dash:
             dcc.Store(id="selected-boundary"),
         ],
         style={"padding": "16px 20px", "fontFamily": "Arial, sans-serif"},
+    )
+
+    agent_tab_layout = _build_agent_tab_layout(config=config, agent_available=agent is not None)
+
+    app.layout = html.Div(
+        [
+            dcc.Tabs(
+                id="top-tabs",
+                value="dashboard",
+                children=[
+                    dcc.Tab(label="Dashboard", value="dashboard", children=[dashboard_tab_layout]),
+                    dcc.Tab(label="Ask a question", value="agent", children=[agent_tab_layout]),
+                ],
+            ),
+        ],
+        style={"fontFamily": "Arial, sans-serif"},
     )
 
     @app.callback(
@@ -467,6 +499,106 @@ def build_dashboard_app() -> Dash:
                 f"Error: {exc}",
             )
 
+    @app.callback(
+        Output("agent-sql", "value"),
+        Output("agent-explanation", "children"),
+        Output("agent-estimate", "children"),
+        Output("agent-generated-sql-store", "data"),
+        Output("agent-generate-error", "children"),
+        Output("agent-results-table", "columns"),
+        Output("agent-results-table", "data"),
+        Output("agent-run-status", "children"),
+        Input("agent-generate-btn", "n_clicks"),
+        State("agent-question", "value"),
+        prevent_initial_call=True,
+    )
+    def generate_sql(_n_clicks: int, question: str | None):
+        if agent is None:
+            return (
+                "",
+                "",
+                "",
+                None,
+                _agent_disabled_message(config),
+                [],
+                [],
+                "",
+            )
+        try:
+            generated = agent.generate(question=question or "")
+        except AgentError as exc:
+            return "", "", "", None, str(exc), [], [], ""
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.exception("Agent generate failed")
+            return "", "", "", None, f"Unexpected agent error: {exc}", [], [], ""
+
+        explanation_children = html.Div(
+            [
+                html.Div("Model explanation", style={"fontWeight": "600"}),
+                html.Div(generated.explanation or "(no explanation returned)"),
+                html.Div(
+                    f"Model: {generated.model}",
+                    style={"color": "#6B7280", "fontSize": "12px", "marginTop": "4px"},
+                ),
+            ]
+        )
+        estimate_children = html.Div(
+            [
+                html.Span("Dry-run estimate: ", style={"color": "#4B5563"}),
+                html.Span(
+                    f"~{format_bytes(generated.estimated_bytes_processed)} scanned",
+                    style={"fontWeight": "600"},
+                ),
+                html.Span(
+                    f" (cap {format_bytes(config.llm_max_bytes_billed)})",
+                    style={"color": "#6B7280", "marginLeft": "6px"},
+                ),
+            ]
+        )
+        return (
+            generated.executable_sql,
+            explanation_children,
+            estimate_children,
+            {
+                "sql": generated.executable_sql,
+                "question": generated.question,
+            },
+            "",
+            [],
+            [],
+            "",
+        )
+
+    @app.callback(
+        Output("agent-results-table", "columns", allow_duplicate=True),
+        Output("agent-results-table", "data", allow_duplicate=True),
+        Output("agent-run-status", "children", allow_duplicate=True),
+        Output("agent-run-error", "children"),
+        Input("agent-run-btn", "n_clicks"),
+        State("agent-generated-sql-store", "data"),
+        prevent_initial_call=True,
+    )
+    def run_generated_sql(_n_clicks: int, pending: dict | None):
+        if agent is None:
+            return [], [], "", _agent_disabled_message(config)
+        if not pending or not pending.get("sql"):
+            return [], [], "", "Generate SQL first, then click Run."
+        try:
+            result = agent.execute(sql=pending["sql"])
+        except AgentError as exc:
+            return [], [], "", str(exc)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.exception("Agent execute failed")
+            return [], [], "", f"Query failed: {exc}"
+
+        columns = [{"name": name, "id": name} for name in result.columns]
+        data = _stringify_rows_for_table(result.rows)
+        status = (
+            f"Returned {len(result.rows):,} row(s) in {result.duration_ms} ms, "
+            f"billed {format_bytes(result.total_bytes_billed)}."
+        )
+        return columns, data, status, ""
+
     return app
 
 
@@ -521,6 +653,207 @@ def _kpi_card_style() -> dict[str, str]:
         "flexDirection": "column",
         "justifyContent": "center",
     }
+
+
+def _build_agent_tab_layout(config: AppConfig, agent_available: bool) -> html.Div:
+    header = html.Div(
+        [
+            html.H1("Ask a question"),
+            html.P(
+                (
+                    f"Powered by {config.llm_model} against "
+                    f"`{config.bq_project}.{config.agent_dataset}`. "
+                    "Type a plain-English question; we'll show the SQL Gemini writes "
+                    "before running it."
+                ),
+                style={"color": "#4B5563"},
+            ),
+        ]
+    )
+
+    if not agent_available:
+        return html.Div(
+            [
+                header,
+                html.Div(
+                    _agent_disabled_message(config),
+                    style={
+                        "padding": "12px",
+                        "border": "1px solid #FCA5A5",
+                        "backgroundColor": "#FEF2F2",
+                        "color": "#7F1D1D",
+                        "borderRadius": "6px",
+                    },
+                ),
+            ],
+            style={"padding": "16px 20px"},
+        )
+
+    return html.Div(
+        [
+            header,
+            html.Div(
+                [
+                    html.Label("Your question", style={"fontWeight": "600"}),
+                    dcc.Textarea(
+                        id="agent-question",
+                        placeholder=(
+                            "e.g. Which neighborhood had the most 311 requests "
+                            "in the last 7 days?"
+                        ),
+                        style={
+                            "width": "100%",
+                            "height": "90px",
+                            "padding": "8px",
+                            "fontFamily": "inherit",
+                        },
+                    ),
+                    html.Div(
+                        [
+                            html.Button(
+                                "Generate SQL",
+                                id="agent-generate-btn",
+                                n_clicks=0,
+                                style=_agent_button_style(primary=True),
+                            ),
+                            html.Div(
+                                id="agent-generate-error",
+                                style={"color": "#B91C1C", "marginLeft": "12px"},
+                            ),
+                        ],
+                        style={
+                            "display": "flex",
+                            "alignItems": "center",
+                            "gap": "8px",
+                            "marginTop": "8px",
+                        },
+                    ),
+                ],
+                style={"marginBottom": "20px"},
+            ),
+            html.Div(
+                [
+                    html.Div("Generated SQL", style={"fontWeight": "600"}),
+                    dcc.Loading(
+                        dcc.Textarea(
+                            id="agent-sql",
+                            value="",
+                            readOnly=True,
+                            style={
+                                "width": "100%",
+                                "height": "220px",
+                                "padding": "8px",
+                                "fontFamily": "'SFMono-Regular', Consolas, monospace",
+                                "fontSize": "13px",
+                                "backgroundColor": "#F9FAFB",
+                            },
+                        ),
+                        type="default",
+                    ),
+                    html.Div(id="agent-explanation", style={"marginTop": "8px"}),
+                    html.Div(id="agent-estimate", style={"marginTop": "4px"}),
+                    html.Div(
+                        [
+                            html.Button(
+                                "Run query",
+                                id="agent-run-btn",
+                                n_clicks=0,
+                                style=_agent_button_style(primary=False),
+                            ),
+                            html.Div(
+                                id="agent-run-status",
+                                style={"color": "#4B5563", "marginLeft": "12px"},
+                            ),
+                        ],
+                        style={
+                            "display": "flex",
+                            "alignItems": "center",
+                            "gap": "8px",
+                            "marginTop": "12px",
+                        },
+                    ),
+                    html.Div(
+                        id="agent-run-error",
+                        style={"color": "#B91C1C", "marginTop": "8px"},
+                    ),
+                ],
+                style={"marginBottom": "20px"},
+            ),
+            html.Div(
+                [
+                    html.Div("Results", style={"fontWeight": "600", "marginBottom": "6px"}),
+                    dcc.Loading(
+                        dash_table.DataTable(
+                            id="agent-results-table",
+                            columns=[],
+                            data=[],
+                            page_size=25,
+                            fixed_rows={"headers": True},
+                            style_table={
+                                "overflowX": "auto",
+                                "maxHeight": "500px",
+                            },
+                            style_cell={
+                                "textAlign": "left",
+                                "padding": "6px 8px",
+                                "fontFamily": "Arial, sans-serif",
+                                "fontSize": "13px",
+                                "minWidth": "80px",
+                                "maxWidth": "400px",
+                                "whiteSpace": "normal",
+                            },
+                            style_header={
+                                "backgroundColor": "#F3F4F6",
+                                "fontWeight": "600",
+                            },
+                        ),
+                        type="default",
+                    ),
+                ]
+            ),
+            dcc.Store(id="agent-generated-sql-store"),
+        ],
+        style={"padding": "16px 20px"},
+    )
+
+
+def _agent_button_style(primary: bool) -> dict[str, str]:
+    base = {
+        "padding": "8px 14px",
+        "border": "1px solid #D1D5DB",
+        "borderRadius": "6px",
+        "cursor": "pointer",
+        "fontWeight": "600",
+    }
+    if primary:
+        base.update({"backgroundColor": "#2563EB", "color": "#FFFFFF", "border": "1px solid #2563EB"})
+    else:
+        base.update({"backgroundColor": "#FFFFFF", "color": "#111827"})
+    return base
+
+
+def _agent_disabled_message(config: AppConfig) -> str:
+    return (
+        "The Ask-a-question agent could not start. Confirm the runtime service "
+        f"account has roles/aiplatform.user in project '{config.llm_project}', "
+        f"that the '{config.agent_dataset}' dataset exists in "
+        f"'{config.bq_project}', and that DASH_AGENT_ENABLED is not set to false."
+    )
+
+
+def _stringify_rows_for_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        display_row: dict[str, Any] = {}
+        for key, value in row.items():
+            if value is None:
+                display_row[key] = ""
+            elif isinstance(value, (dict, list)):
+                display_row[key] = json.dumps(value, default=str)
+            else:
+                display_row[key] = value
+        out.append(display_row)
+    return out
 
 
 app = build_dashboard_app()
