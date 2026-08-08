@@ -7,6 +7,15 @@ Plotly Dash app for exploring San Francisco livability metrics by boundary:
 
 Click a polygon to load metrics for that boundary and a Pacific-time date window.
 
+The app has two tabs:
+
+1. **Dashboard** — the map + KPI + histogram view described below.
+2. **Ask a question** — a Gemini-powered text-to-SQL agent that answers
+   plain-English questions against the curated
+   `neighborhood_livability_gold` dataset. Every generated query is shown
+   to the user with a dry-run byte estimate before it runs. See
+   [Text-to-SQL agent](#text-to-sql-agent) below.
+
 ## Technical design note
 
 This dashboard intentionally follows the locked MVP contract from the planning docs:
@@ -57,6 +66,18 @@ Optional overrides:
 - `DASH_CACHE_TTL_SECONDS` (default `300`)
 - `DASH_CACHE_MAX_ENTRIES` (default `512`)
 
+Text-to-SQL agent overrides:
+
+- `DASH_AGENT_ENABLED` (default `true`, set to `false` to hide the tab)
+- `DASH_AGENT_DATASET` (default `neighborhood_livability_gold`)
+- `DASH_LLM_PROJECT` (default same as `DASH_BQ_PROJECT`)
+- `DASH_LLM_LOCATION` (default `us-central1`) — Vertex AI region
+- `DASH_LLM_MODEL` (default `gemini-2.5-flash`)
+- `DASH_LLM_MAX_BYTES_BILLED` (default `5368709120`, i.e. 5 GB)
+- `DASH_LLM_ROW_LIMIT` (default `1000`) — outer LIMIT applied to any
+  generated query that doesn't already specify one
+- `DASH_LLM_TIMEOUT_SECONDS` (default `30`)
+
 You also need Google Cloud credentials available in your environment (for example `GOOGLE_APPLICATION_CREDENTIALS`).
 
 ## Run locally
@@ -97,7 +118,8 @@ gcloud services enable \
   run.googleapis.com \
   cloudbuild.googleapis.com \
   artifactregistry.googleapis.com \
-  bigquery.googleapis.com
+  bigquery.googleapis.com \
+  aiplatform.googleapis.com
 
 gcloud artifacts repositories create "$REPO_NAME" \
   --repository-format=docker \
@@ -118,6 +140,12 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
   --role="roles/bigquery.dataViewer"
+
+# Text-to-SQL agent: allow the runtime SA to call Vertex AI Gemini.
+# Only needed if you plan to enable the "Ask a question" tab.
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --role="roles/aiplatform.user"
 ```
 
 ### 3) Build and push image
@@ -140,7 +168,7 @@ gcloud run deploy "$SERVICE_NAME" \
   --service-account "${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
   --allow-unauthenticated \
   --port 8080 \
-  --set-env-vars "DASH_BQ_PROJECT=${PROJECT_ID},DASH_BQ_DATASET=neighborhood_livability_data,DASH_BQ_LOCATION=US"
+  --set-env-vars "DASH_BQ_PROJECT=${PROJECT_ID},DASH_BQ_DATASET=neighborhood_livability_data,DASH_BQ_LOCATION=US,DASH_AGENT_DATASET=neighborhood_livability_gold,DASH_LLM_LOCATION=us-central1,DASH_LLM_MODEL=gemini-2.5-flash"
 ```
 
 ### 5) Verify
@@ -164,8 +192,58 @@ Notes:
 - Null boundary IDs excluded from boundary aggregates.
 - Transit join on `trip_stops.stop_id = stops.stop_id`.
 
+## Text-to-SQL agent
+
+The **Ask a question** tab uses Vertex AI Gemini to translate a
+plain-English question into a BigQuery `SELECT` against the
+`neighborhood_livability_gold` dataset. See
+[`docs/text_to_sql_agent_plan.md`](docs/text_to_sql_agent_plan.md) for the
+full design.
+
+Flow:
+
+1. User types a question (e.g. "Which neighborhoods had the most 311
+   requests in the last 7 days?").
+2. **Generate SQL** — the agent introspects the gold dataset's schema
+   from `INFORMATION_SCHEMA.COLUMNS`, prompts Gemini, parses the returned
+   JSON, validates the SQL, applies a row cap if needed, and runs a
+   BigQuery dry-run to estimate bytes scanned.
+3. The generated SQL and byte estimate are shown to the user, along with
+   the model's own short explanation.
+4. **Run query** — the validated SQL is executed with
+   `maximum_bytes_billed=DASH_LLM_MAX_BYTES_BILLED` and results appear in
+   a paginated table.
+
+Guardrails:
+
+- Only `SELECT` / `WITH` statements are accepted (validated with
+  `sqlglot` plus a keyword sweep).
+- If the model omits a `LIMIT`, the executor wraps the statement in
+  `SELECT * FROM (…) LIMIT DASH_LLM_ROW_LIMIT`.
+- Every query is dry-run first; queries projected to scan more than
+  `DASH_LLM_MAX_BYTES_BILLED` are rejected before any real billing.
+- Runtime SA only holds `roles/bigquery.dataViewer`, so even if a
+  guardrail were bypassed BigQuery would refuse writes.
+
+Local requirements:
+
+- `pip install -r dashboard/app/requirements.txt` (already picks up
+  `google-genai` and `sqlglot`).
+- Vertex AI API enabled and `roles/aiplatform.user` on your local
+  credentials (see IAM section above).
+
+To hide the agent tab entirely (e.g. for a demo without Vertex access):
+
+```bash
+export DASH_AGENT_ENABLED=false
+```
+
 ## Known limitations (MVP)
 
 - No persistent external cache (in-process cache only).
 - Transit join on `stop_id` only may include cross-agency collisions if duplicate stop IDs exist across agencies.
 - Error handling is user-readable but not yet integrated with centralized monitoring.
+- Text-to-SQL agent has no per-user rate limit; expensive-question guards
+  rely on `DASH_LLM_MAX_BYTES_BILLED` and `DASH_LLM_ROW_LIMIT`.
+- Text-to-SQL agent doesn't remember prior questions in a session — each
+  ask is stateless.
