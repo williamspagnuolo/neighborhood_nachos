@@ -629,3 +629,88 @@ Append entries using this template. Keep previous entries intact.
 **Follow-up**
 
 - All numbered implementation packages are complete. The remaining work is authorized development deployment/integration validation and, only after review, the external production rollout described in `transit/orchestration/README.md`.
+
+### Deployment correction — Workflow input-map expression — 2026-08-08
+
+**Status:** `COMPLETE`
+
+**Trigger and finding**
+
+- The first authorized `gcloud workflows deploy` surfaced a real Workflows parser error at `input_map: ${default(input, {})}`. Workflows expressions do not allow an inline empty-map literal in that expression context. The workflow was not deployed.
+
+**Changes made**
+
+- `transit/orchestration/workflow.yaml`: changed the assignment to `input_map: ${input}`. `map.get` is already used for both optional input fields and safely returns `null` for a missing/non-map input, allowing the existing `default(...)` expressions to select yesterday UTC and both agencies.
+- `transit/app/tests/test_pipeline_failures.py`: added source-level assertions that prevent reintroducing the invalid inline empty-map expression.
+
+**Verification performed by agent**
+
+- Read current official Workflows map and `map.get` documentation. It confirms that `map.get` returns `null` for a non-map input or a missing key, and that maps are defined in YAML rather than as this inline expression literal.
+- The normal local test suite is being run after this correction. The owner must redeploy the corrected local source.
+
+**External action**
+
+- Rerun the same `deploy_workflow.sh` command from the repository root. This deploys only the corrected workflow definition; it does not rebuild or redeploy the four job images.
+
+### Deployment correction — Cross-date latest-observation merge — 2026-08-08
+
+**Status:** `COMPLETE`
+
+**Trigger and finding**
+
+- Review before the first workflow execution found that an overlapping trip can have the same six-column canonical key in adjacent UTC raw-folder dates. Parser deduplication selects the latest snapshot only within each source date, while the prior BigQuery `WHEN MATCHED` clause overwrote target columns unconditionally. Processing a newer date before an older date could therefore regress the target observation.
+
+**Changes made**
+
+- `transit/app/upsert_joined_day_to_bigquery.py`: added a null-safe `latest_snapshot_ts` predicate to the matched `MERGE` branch. A staged row updates a matched target only when the target timestamp is null, or the staged timestamp is present and greater than or equal to the target timestamp. Equal timestamps retain idempotent rerun behavior; an older staged observation cannot replace a newer target observation.
+- `transit/app/tests/test_row_identity.py`: added regression coverage asserting that the generated `MERGE` includes the cross-date freshness guard.
+
+**Required redeployment**
+
+- The shared job image must be rebuilt with a new immutable tag, then only `joined-upsert-bigquery-day` must be updated to that new image. The Workflow definition is unchanged. No Cloud Run execution, GCS operation, BigQuery operation, Scheduler change, or deployment was performed by the agent for this correction.
+
+**Verification performed by agent**
+
+- `/Users/patri/miniconda3/envs/env_transit/bin/python -m unittest discover -s transit/app/tests -p 'test_*.py' -v`: 30 tests passed, including the new July 2 then July 1 merge-guard assertion.
+- `/Users/patri/miniconda3/envs/env_transit/bin/python -m py_compile transit/app/upsert_joined_day_to_bigquery.py transit/app/tests/test_row_identity.py`: passed.
+- `git diff --check`: passed.
+- Rendered the generated `MERGE` SQL locally and verified its `WHEN MATCHED AND` guard. No BigQuery query or mutation was performed.
+
+### Deployment correction — Workflow date comparison — 2026-08-08
+
+**Status:** `COMPLETE`
+
+**Trigger and finding**
+
+- The first manual execution for `2026-07-07` failed before any Cloud Run Job call at `reject_today_or_future`. Workflows does not support ordering comparisons between strings; the workflow compared `source_date` and `today_utc` strings using `>=`.
+
+**Changes made**
+
+- `transit/orchestration/workflow.yaml`: parses both UTC midnight date strings with `time.parse` and compares the returned numeric timestamps. This preserves the intended rejection of today and future source-folder dates.
+- `transit/app/tests/test_pipeline_failures.py`: asserts the numeric date comparison and prevents reintroduction of the invalid string comparison.
+
+**Verification and external action**
+
+- Official Workflows documentation confirms `time.parse` returns a numeric seconds-since-epoch timestamp and that string ordering comparisons are unsupported.
+- `ruby -e 'require "yaml"; YAML.load_file("transit/orchestration/workflow.yaml")'`, the 30-test local suite, and `git diff --check` passed after this correction.
+- The failed execution lasted about 70 milliseconds and failed before Cloud Run invocation; it created no derived data or BigQuery mutation. Redeploy only the Workflow source, then start a new one-date `2026-07-07` execution. No image rebuild or Cloud Run Job update is needed for this correction.
+
+### Deployment correction — Workflow Cloud Run operation polling — 2026-08-08
+
+**Status:** `IN PROGRESS`
+
+**Trigger and finding**
+
+- The second manual `2026-07-07` workflow execution started both parser jobs but failed while the Cloud Run connector polled their long-running operations. The workflow identity has `run.jobs.runWithOverrides` on each job, but the connector received `403 Permission 'run.operations.get' denied` on the operation resource. Join and BigQuery upsert did not start.
+
+**Changes made**
+
+- `transit/orchestration/README.md`: added the missing project-level `roles/run.viewer` grant for the workflow identity and documented why it is needed. This built-in viewer role includes `run.operations.get`; it is read-only and does not permit job creation, update, deletion, or execution on additional jobs.
+
+**Required external actions**
+
+- Before another July 7 Workflow run, inspect the two launched parser executions and confirm they are terminal. Then grant `roles/run.viewer` to the workflow account on the project, verify the binding, and start one new execution. The prior execution must not be retried while either parser execution is active.
+
+**Documentation correction**
+
+- `transit/plans/BACKFILL_RUNBOOK.md`: corrected `gcloud run jobs executions list` to use the current CLI's required `--job <name>` flag. The prior positional-job form was rejected locally before making any cloud request.

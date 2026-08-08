@@ -79,10 +79,10 @@ belongs to the same date. Do not start a backfill until any same-date job is
 terminal.
 
 ```bash
-gcloud run jobs executions list tripupdates-parse-day --project "$PROJECT_ID" --region "$REGION"
-gcloud run jobs executions list vehiclepositions-parse-day --project "$PROJECT_ID" --region "$REGION"
-gcloud run jobs executions list tripupdates-vp-join-day --project "$PROJECT_ID" --region "$REGION"
-gcloud run jobs executions list joined-upsert-bigquery-day --project "$PROJECT_ID" --region "$REGION"
+gcloud run jobs executions list --job tripupdates-parse-day --project "$PROJECT_ID" --region "$REGION"
+gcloud run jobs executions list --job vehiclepositions-parse-day --project "$PROJECT_ID" --region "$REGION"
+gcloud run jobs executions list --job tripupdates-vp-join-day --project "$PROJECT_ID" --region "$REGION"
+gcloud run jobs executions list --job joined-upsert-bigquery-day --project "$PROJECT_ID" --region "$REGION"
 ```
 
 If the daily Scheduler could overlap, pause it temporarily. Do not start two backfills for the same date.
@@ -213,7 +213,11 @@ A failed unique staging table may be inspected and then removed by exact name. N
 
 ## Step 8: continue or finish
 
-Only after validation should you submit the next date. Process dates sequentially, oldest to newest. When finished, re-enable Scheduler if it was paused and confirm the next daily run succeeds.
+Only after validation should you submit the next date. Continue one date at a
+time; oldest to newest remains easiest to audit. The loader's timestamp guard
+prevents an older cross-boundary observation from replacing a newer target row
+if dates must be processed out of order. When finished, re-enable Scheduler if
+it was paused and confirm the next daily run succeeds.
 
 ## Rerunning a previously successful date
 

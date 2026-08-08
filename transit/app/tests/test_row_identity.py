@@ -149,6 +149,12 @@ class CanonicalRowIdentityTests(unittest.TestCase):
             "project", "dataset", "target", "stage", CANONICAL_ROW_KEY
         )
         self.assertIn("T.`trip_start_time` = S.`trip_start_time`", merge_sql)
+        self.assertIn("WHEN MATCHED AND", merge_sql)
+        self.assertIn("T.`latest_snapshot_ts` IS NULL", merge_sql)
+        self.assertIn("S.`latest_snapshot_ts` IS NOT NULL", merge_sql)
+        self.assertIn(
+            "S.`latest_snapshot_ts` >= T.`latest_snapshot_ts`", merge_sql
+        )
 
         client = Mock()
         client.query.return_value.result.return_value = [
@@ -158,6 +164,20 @@ class CanonicalRowIdentityTests(unittest.TestCase):
             upsert_job._assert_stage_has_unique_canonical_keys(
                 client, "project", "dataset", "stage", CANONICAL_ROW_KEY
             )
+
+    def test_merge_does_not_replace_a_newer_cross_date_observation(self) -> None:
+        """The SQL guard makes a July 1 rerun safe after a July 2 observation."""
+        merge_sql = upsert_job._build_merge_sql(
+            "project", "dataset", "target", "stage", CANONICAL_ROW_KEY
+        )
+        expected_guard = """WHEN MATCHED AND (
+  T.`latest_snapshot_ts` IS NULL
+  OR (
+    S.`latest_snapshot_ts` IS NOT NULL
+    AND S.`latest_snapshot_ts` >= T.`latest_snapshot_ts`
+  )
+) THEN"""
+        self.assertIn(expected_guard, merge_sql)
 
     def test_staging_name_is_execution_and_agency_specific(self) -> None:
         muni_name = upsert_job.build_staging_table_name(

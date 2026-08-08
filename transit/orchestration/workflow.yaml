@@ -6,7 +6,9 @@ main:
   steps:
     - initialize:
         assign:
-          - input_map: ${default(input, {})}
+          # map.get safely returns null if an execution supplies no input map.
+          # Do not use an inline {} literal inside a Workflows expression.
+          - input_map: ${input}
           - project_id: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
           - region: "us-central1"
           - today_utc: ${text.substring(time.format(sys.now(), "UTC"), 0, 10)}
@@ -23,9 +25,14 @@ main:
         args:
           value: ${source_date + "T00:00:00Z"}
         result: source_date_timestamp
+    - parse_today_utc:
+        call: time.parse
+        args:
+          value: ${today_utc + "T00:00:00Z"}
+        result: today_utc_timestamp
     - reject_today_or_future:
         switch:
-          - condition: ${source_date >= today_utc}
+          - condition: ${source_date_timestamp >= today_utc_timestamp}
             raise: ${"source_date must be earlier than today in UTC (" + today_utc + "); got " + source_date}
     - validate_agencies:
         for:

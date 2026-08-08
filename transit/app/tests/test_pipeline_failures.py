@@ -93,6 +93,13 @@ class PipelineFailureTests(unittest.TestCase):
         source = (REPO_TRANSIT_DIR / "orchestration" / "workflow.yaml").read_text(
             encoding="utf-8"
         )
+        self.assertIn("- input_map: ${input}", source)
+        self.assertNotIn("${default(input, {})}", source)
+        self.assertIn("- parse_today_utc:", source)
+        self.assertIn(
+            "${source_date_timestamp >= today_utc_timestamp}", source
+        )
+        self.assertNotIn("${source_date >= today_utc}", source)
         self.assertIn("parallel:", source)
         self.assertIn("job_name: \"tripupdates-parse-day\"", source)
         self.assertIn("job_name: \"vehiclepositions-parse-day\"", source)

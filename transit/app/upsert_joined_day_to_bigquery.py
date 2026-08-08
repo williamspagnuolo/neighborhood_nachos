@@ -238,6 +238,17 @@ def _null_safe_join_predicate(keys: list[str]) -> str:
     )
 
 
+def _newer_or_equal_snapshot_predicate() -> str:
+    """Keep the target observation when an overlapping source date is older."""
+    return """(
+  T.`latest_snapshot_ts` IS NULL
+  OR (
+    S.`latest_snapshot_ts` IS NOT NULL
+    AND S.`latest_snapshot_ts` >= T.`latest_snapshot_ts`
+  )
+)"""
+
+
 def _build_duplicate_key_count_sql(
     project: str, dataset: str, stage_table: str, stage_columns: list[str]
 ) -> str:
@@ -328,7 +339,7 @@ USING (
   FROM {_quote_table(project, dataset, stage_table)} R
 ) S
 ON {_null_safe_join_predicate(JOIN_KEYS)}
-WHEN MATCHED THEN
+    WHEN MATCHED AND {_newer_or_equal_snapshot_predicate()} THEN
   UPDATE SET
     {update_clause}
 WHEN NOT MATCHED THEN

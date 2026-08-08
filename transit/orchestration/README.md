@@ -37,6 +37,7 @@ bq --project_id="$PROJECT_ID" show "$DATASET.$TARGET_TABLE"
 | Loader account | project | `roles/bigquery.jobUser`. |
 | Loader account | target dataset | `roles/bigquery.dataEditor` for its unique staging table and target merge. |
 | Workflow account | each of the four daily jobs | `roles/run.jobsExecutorWithOverrides`. |
+| Workflow account | project | `roles/run.viewer` to poll the long-running Cloud Run operations returned when it starts those jobs. |
 | Scheduler account | one workflow | `roles/workflows.invoker`. |
 
 Do not retain broad project `Editor` or default Compute Engine identities for
@@ -66,6 +67,7 @@ bq --project_id="$PROJECT_ID" add-iam-policy-binding --member "serviceAccount:$L
 for job in tripupdates-parse-day vehiclepositions-parse-day tripupdates-vp-join-day joined-upsert-bigquery-day; do
   gcloud run jobs add-iam-policy-binding "$job" --project "$PROJECT_ID" --region "$REGION" --member "serviceAccount:$WORKFLOW_SA" --role roles/run.jobsExecutorWithOverrides
 done
+gcloud projects add-iam-policy-binding "$PROJECT_ID" --member "serviceAccount:$WORKFLOW_SA" --role roles/run.viewer
 ```
 
 ## Build and deploy daily jobs
