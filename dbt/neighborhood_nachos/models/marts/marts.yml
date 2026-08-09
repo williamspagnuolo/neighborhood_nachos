@@ -1,0 +1,30 @@
+version: 2
+
+models:
+  - name: gold_dashboard_events
+    description: >
+      Event-level OLAP fact table used by 
+      the San Francisco Livability Dashboard.
+    columns:
+      - name: event_id
+        tests:
+          - not_null
+          - unique
+
+      - name: event_type
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - "311"
+                  - "police"
+                  - "transit"
+      
+      - name: event_ts_utc
+        tests:
+          - not_null
+
+      - name: event_date_pacific
+        tests: 
+          - not_null

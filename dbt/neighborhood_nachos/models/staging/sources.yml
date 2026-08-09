@@ -1,0 +1,14 @@
+version: 2
+
+sources:
+  - name: livability
+    database: neighboorhood-nachos
+    schema: neighborhood_livability_data
+
+    tables:
+      - name: 311_incidents
+      - name: police_incidents
+      - name: trip_stops
+      - name: stops
+      - name: neighborhoods
+      - name: police_districts
