@@ -93,14 +93,20 @@ def build_dashboard_app() -> Dash:
     )
 
     agent: TextToSqlAgent | None = None
+    agent_disabled_reason: str | None = None
     if config.agent_enabled:
         try:
             agent = TextToSqlAgent.create(config=config, bq_client=bq_client)
         except Exception as exc:  # noqa: BLE001
+            agent_disabled_reason = str(exc)
             LOGGER.warning(
                 "Text-to-SQL agent unavailable, tab will show a friendly error: %s",
                 exc,
             )
+    else:
+        agent_disabled_reason = (
+            "The Ask-a-question agent is disabled (DASH_AGENT_ENABLED=false)."
+        )
 
     try:
         default_start_date, default_end_date, min_allowed_date, max_allowed_date = _default_date_range(
@@ -280,7 +286,11 @@ def build_dashboard_app() -> Dash:
         style={"padding": "16px 20px", "fontFamily": "Arial, sans-serif"},
     )
 
-    agent_tab_layout = _build_agent_tab_layout(config=config, agent_available=agent is not None)
+    agent_tab_layout = _build_agent_tab_layout(
+        config=config,
+        agent_available=agent is not None,
+        disabled_reason=agent_disabled_reason,
+    )
 
     app.layout = html.Div(
         [
@@ -499,6 +509,13 @@ def build_dashboard_app() -> Dash:
                 f"Error: {exc}",
             )
 
+    if agent is not None:
+        _register_agent_callbacks(app=app, agent=agent, config=config)
+
+    return app
+
+
+def _register_agent_callbacks(app: Dash, agent: TextToSqlAgent, config: AppConfig) -> None:
     @app.callback(
         Output("agent-sql", "value"),
         Output("agent-explanation", "children"),
@@ -513,17 +530,6 @@ def build_dashboard_app() -> Dash:
         prevent_initial_call=True,
     )
     def generate_sql(_n_clicks: int, question: str | None):
-        if agent is None:
-            return (
-                "",
-                "",
-                "",
-                None,
-                _agent_disabled_message(config),
-                [],
-                [],
-                "",
-            )
         try:
             generated = agent.generate(question=question or "")
         except AgentError as exc:
@@ -579,8 +585,6 @@ def build_dashboard_app() -> Dash:
         prevent_initial_call=True,
     )
     def run_generated_sql(_n_clicks: int, pending: dict | None):
-        if agent is None:
-            return [], [], "", _agent_disabled_message(config)
         if not pending or not pending.get("sql"):
             return [], [], "", "Generate SQL first, then click Run."
         try:
@@ -598,8 +602,6 @@ def build_dashboard_app() -> Dash:
             f"billed {format_bytes(result.total_bytes_billed)}."
         )
         return columns, data, status, ""
-
-    return app
 
 
 def _safe_layer(boundaries: BoundaryService, mode_value: BoundaryMode) -> BoundaryLayer:
@@ -655,7 +657,11 @@ def _kpi_card_style() -> dict[str, str]:
     }
 
 
-def _build_agent_tab_layout(config: AppConfig, agent_available: bool) -> html.Div:
+def _build_agent_tab_layout(
+    config: AppConfig,
+    agent_available: bool,
+    disabled_reason: str | None = None,
+) -> html.Div:
     header = html.Div(
         [
             html.H1("Ask a question"),
@@ -676,7 +682,7 @@ def _build_agent_tab_layout(config: AppConfig, agent_available: bool) -> html.Di
             [
                 header,
                 html.Div(
-                    _agent_disabled_message(config),
+                    _agent_disabled_message(config, reason=disabled_reason),
                     style={
                         "padding": "12px",
                         "border": "1px solid #FCA5A5",
@@ -832,12 +838,14 @@ def _agent_button_style(primary: bool) -> dict[str, str]:
     return base
 
 
-def _agent_disabled_message(config: AppConfig) -> str:
+def _agent_disabled_message(config: AppConfig, reason: str | None = None) -> str:
+    reason_prefix = f"{reason} " if reason else "The Ask-a-question agent could not start. "
     return (
-        "The Ask-a-question agent could not start. Confirm the runtime service "
-        f"account has roles/aiplatform.user in project '{config.llm_project}', "
-        f"that the '{config.agent_dataset}' dataset exists in "
-        f"'{config.bq_project}', and that DASH_AGENT_ENABLED is not set to false."
+        f"{reason_prefix}"
+        "Confirm the runtime service account has roles/aiplatform.user in "
+        f"project '{config.llm_project}', that the '{config.agent_dataset}' "
+        f"dataset exists in '{config.bq_project}' and contains queryable tables, "
+        "and that DASH_AGENT_ENABLED is not set to false."
     )
 
 
