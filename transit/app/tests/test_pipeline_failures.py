@@ -97,6 +97,12 @@ class PipelineFailureTests(unittest.TestCase):
         self.assertNotIn("${default(input, {})}", source)
         self.assertIn("- parse_today_utc:", source)
         self.assertIn(
+            '- agencies: ${default(map.get(input_map, "agencies"), ["muni"])}',
+            source,
+        )
+        self.assertIn('${not(agency in ["muni"])}', source)
+        self.assertNotIn('["muni", "bart"]', source)
+        self.assertIn(
             "${source_date_timestamp >= today_utc_timestamp}", source
         )
         self.assertNotIn("${source_date >= today_utc}", source)

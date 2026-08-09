@@ -42,8 +42,7 @@ Use a development bucket prefix and BigQuery dataset.
 | Test | Expected result |
 |---|---|
 | One complete Muni date | Parsers run together, then join and load succeed. |
-| One complete BART date | Same result under BART-specific paths. |
-| Both agencies in one workflow | Muni completes, then BART; their outputs do not mix. |
+| BART workflow input | Input validation rejects it before starting a Cloud Run Job. |
 | Missing raw feed folder | Parser fails and join/load do not start. |
 | Corrupt parser input | Workflow fails and dependent stages do not start. |
 | Join schema/key error | Loader does not start. |
@@ -84,11 +83,10 @@ Run the daily schedule in development for several days and confirm:
 - All “must fix” issues in `RISKS_OPEN_QUESTIONS.md` are resolved.
 - Credentials are rotated and stored outside tracked files.
 - Resource identifiers, location, target schema, and business key are approved.
-- Happy-path, failure-ordering, stale-shard, and rerun tests pass for both agencies.
+- Happy-path, failure-ordering, stale-shard, and rerun tests pass for Muni.
 - The manual backfill rehearsal passes.
 - The team knows how to pause Scheduler and inspect workflow/job logs.
 
 ## Simple rollback
 
 Pause Scheduler, let any active job reach a known terminal state, and redeploy the last known workflow/image revision if needed. Preserve raw data. Inspect BigQuery before resuming; do not use broad GCS deletion or table replacement as rollback.
-

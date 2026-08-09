@@ -5,9 +5,10 @@ This is the implementation contract for the first production-ready version. Keep
 ## 1. Processing unit
 
 - **Source date**: a UTC `YYYY-MM-DD` folder under `raw/<feed>/<agency>/`. The ingestion code creates these folders in UTC.
-- **Agency**: `muni` or `bart`.
+- **Agency**: `muni`. BART transformation is deferred because its observed
+  VehiclePositions data does not satisfy the approved canonical row identity.
 - One workflow execution processes one source date.
-- The workflow processes Muni and BART sequentially. Within an agency, its two parsers run concurrently.
+- The workflow processes Muni only. Its two parsers run concurrently.
 
 ## 2. Dependency order
 
@@ -26,7 +27,7 @@ If either parser fails, the join and upsert must not run. If the join fails, the
 ```json
 {
   "source_date": "2026-06-23",
-  "agencies": ["muni", "bart"]
+  "agencies": ["muni"]
 }
 ```
 
@@ -60,7 +61,8 @@ latest/VehiclePositions/{agency}/{source_date}/part-*.parquet
 latest/joined/{agency}/{source_date}/part-*.parquet
 ```
 
-The current joined path lacks agency and must be fixed before automating both agencies.
+Agency remains part of every derived path so a future BART investigation cannot
+mix its artifacts with Muni output.
 
 Reruns must not mix old and new shards. Choose one simple policy and test it:
 
@@ -107,4 +109,3 @@ The join should verify that a left join produces the same row count as TripUpdat
 - The workflow service account can execute only the required jobs. Job service accounts receive only their necessary GCS/BigQuery access.
 
 Official references: [Cloud Run v2 Workflows connector](https://cloud.google.com/workflows/docs/reference/googleapis/run/v2/projects.locations.jobs/run), [parallel steps](https://cloud.google.com/workflows/docs/execute-parallel-steps), and [scheduling workflows](https://cloud.google.com/workflows/docs/schedule-workflow).
-

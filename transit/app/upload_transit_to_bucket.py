@@ -25,6 +25,20 @@ def parse_api_keys(raw_keys):
     return [key.strip() for key in raw_keys.split(",") if key.strip()]
 
 
+def env_bool(name, default=False):
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+    normalized = raw_value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(
+        f"{name} must be one of true/false, 1/0, yes/no, or on/off"
+    )
+
+
 def select_api_key(api_keys, fetched_at):
     # Rotate keys deterministically by base interval slot for stateless runs.
     slot_index = int(fetched_at.timestamp() // BASE_CALL_INTERVAL_SECONDS)
@@ -91,6 +105,7 @@ def call_transit_and_upload(
     raw_root_prefix,
     latest_bucket_name,
     latest_root_prefix,
+    copy_raw_to_latest=False,
 ):
     uploaded_raw = []
     copied_latest = []
@@ -110,32 +125,38 @@ def call_transit_and_upload(
             raw_blob_name = build_raw_blob_name(
                 feed_name, agency_name, fetched_at, raw_root_prefix
             )
-            latest_blob_name = raw_blob_name.replace(
-                f"{raw_root_prefix}/",
-                f"{latest_root_prefix}/",
-                1,
-            )
-            latest_blob_name = latest_blob_name.replace(
-                f"/{fetched_at.strftime('%Y-%m-%d')}/",
-                "/",
-                1,
-            )
-
             # Write immutable historical snapshot to raw/.
             upload_feed_to_bucket(raw_bucket_name, raw_blob_name, data)
             uploaded_raw.append(raw_blob_name)
 
-            # Promote the same snapshot from raw/ into latest/<Feed>/<agency>/<timestamp>.pb
-            copy_blob_between_buckets(
-                raw_bucket_name,
-                raw_blob_name,
-                latest_bucket_name,
-                latest_blob_name,
-            )
-            copied_latest.append(latest_blob_name)
+            # Optional compatibility path for external consumers of the legacy
+            # flat latest/<Feed>/<agency>/<timestamp>.pb layout. The daily
+            # pipeline reads protobuf only from raw/ and leaves this disabled.
+            if copy_raw_to_latest:
+                latest_blob_name = raw_blob_name.replace(
+                    f"{raw_root_prefix}/",
+                    f"{latest_root_prefix}/",
+                    1,
+                )
+                latest_blob_name = latest_blob_name.replace(
+                    f"/{fetched_at.strftime('%Y-%m-%d')}/",
+                    "/",
+                    1,
+                )
+                copy_blob_between_buckets(
+                    raw_bucket_name,
+                    raw_blob_name,
+                    latest_bucket_name,
+                    latest_blob_name,
+                )
+                copied_latest.append(latest_blob_name)
 
     uploaded_raw_msg = ", ".join(uploaded_raw) if uploaded_raw else "none"
-    copied_latest_msg = ", ".join(copied_latest) if copied_latest else "none"
+    copied_latest_msg = (
+        ", ".join(copied_latest)
+        if copied_latest
+        else "none" if copy_raw_to_latest else "disabled"
+    )
     skipped_msg = ", ".join(skipped) if skipped else "none"
     return (
         "transit feed run complete "
@@ -188,6 +209,7 @@ def build_config_from_env():
     latest_root_prefix = os.environ.get(
         "TRANSIT_LATEST_ROOT_PREFIX", LATEST_ROOT_PREFIX
     ).strip("/")
+    copy_raw_to_latest = env_bool("TRANSIT_COPY_RAW_TO_LATEST", default=False)
 
     for feed_name, agency_config in feed_agency_api_keys.items():
         for agency_name, keys in agency_config.items():
@@ -202,9 +224,10 @@ def build_config_from_env():
         raise ValueError(
             "GCS_RAW_BUCKET_NAME (or legacy GCS_BUCKET_NAME) environment variable is required"
         )
-    if not latest_bucket_name:
+    if copy_raw_to_latest and not latest_bucket_name:
         raise ValueError(
-            "GCS_LATEST_BUCKET_NAME (or GCS_RAW_BUCKET_NAME/GCS_BUCKET_NAME fallback) is required"
+            "GCS_LATEST_BUCKET_NAME (or GCS_RAW_BUCKET_NAME/GCS_BUCKET_NAME "
+            "fallback) is required when TRANSIT_COPY_RAW_TO_LATEST=true"
         )
 
     return (
@@ -214,6 +237,7 @@ def build_config_from_env():
         raw_root_prefix,
         latest_bucket_name,
         latest_root_prefix,
+        copy_raw_to_latest,
     )
 
 
@@ -226,6 +250,7 @@ def run_once_from_env():
         raw_root_prefix,
         latest_bucket_name,
         latest_root_prefix,
+        copy_raw_to_latest,
     ) = build_config_from_env()
     return call_transit_and_upload(
         feed_agency_api_keys,
@@ -234,6 +259,7 @@ def run_once_from_env():
         raw_root_prefix,
         latest_bucket_name,
         latest_root_prefix,
+        copy_raw_to_latest,
     )
 
 

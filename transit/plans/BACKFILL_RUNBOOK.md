@@ -12,11 +12,11 @@ Use this procedure after the workflow has been implemented and tested. It intent
 
 ## Step 1: choose one missing date
 
-Record the UTC source date and agencies. Remember that this date selects the ingestion folder, not necessarily a Pacific transit service day.
+Record the UTC source date and agency. Remember that this date selects the ingestion folder, not necessarily a Pacific transit service day.
 
 ```text
 source_date: YYYY-MM-DD
-agencies: muni, bart
+agencies: muni
 reason:
 operator:
 ```
@@ -41,8 +41,8 @@ date, not a Pacific transit service date.
 
 ## Step 2: check raw input
 
-Confirm that both folders contain `.pb` files for each requested agency. The
-following four **read-only** commands must each return one or more object
+Confirm that both Muni feed folders contain `.pb` files. The following two
+**read-only** commands must each return one or more object
 names; a no-match error is a reason to stop.
 
 ```text
@@ -53,8 +53,6 @@ gs://<bucket>/raw/VehiclePositions/<agency>/<date>/
 ```bash
 gcloud storage ls "gs://$BUCKET/raw/TripUpdates/muni/$SOURCE_DATE/*.pb"
 gcloud storage ls "gs://$BUCKET/raw/VehiclePositions/muni/$SOURCE_DATE/*.pb"
-gcloud storage ls "gs://$BUCKET/raw/TripUpdates/bart/$SOURCE_DATE/*.pb"
-gcloud storage ls "gs://$BUCKET/raw/VehiclePositions/bart/$SOURCE_DATE/*.pb"
 ```
 
 Compare the counts and first/last timestamps with a nearby normal date. If a feed is absent, stop: the historical realtime snapshots cannot be recovered from the API. If the day is clearly partial, document that fact and obtain approval before loading it.
@@ -92,14 +90,14 @@ This manual check replaces a custom locking subsystem in the initial simple desi
 ## Step 4: invoke the workflow
 
 This is a **Workflow execution mutation**. It starts the same `transit-daily`
-workflow used by the daily path for exactly one UTC date and both agencies.
+workflow used by the daily path for exactly one UTC date and Muni only.
 Run it only after the previous checks pass:
 
 ```bash
 EXECUTION_NAME="$(gcloud workflows execute "$WORKFLOW_NAME" \
   --project "$PROJECT_ID" \
   --location "$REGION" \
-  --data "{\"source_date\":\"$SOURCE_DATE\",\"agencies\":[\"muni\",\"bart\"]}" \
+  --data "{\"source_date\":\"$SOURCE_DATE\",\"agencies\":[\"muni\"]}" \
   --format='value(name)')"
 printf '%s\n' "$EXECUTION_NAME"
 ```
@@ -110,7 +108,7 @@ execution until the failure is understood.
 
 ## Step 5: monitor stage order
 
-For Muni, then BART, expect:
+For Muni, expect:
 
 1. TripUpdates and VehiclePositions parsers run concurrently.
 2. Join starts only after both parsers succeed.
@@ -143,7 +141,7 @@ gcloud workflows executions describe "$EXECUTION_NAME" \
 
 ## Step 6: validate the result
 
-For each agency/date, verify:
+For the Muni/date result, verify:
 
 - workflow and Cloud Run executions succeeded;
 - parser input counts and output rows are nonzero;
@@ -157,9 +155,9 @@ For each agency/date, verify:
 Record the counts and result next to the backfill request.
 
 Use this **read-only BigQuery query** after the workflow succeeds. It returns
-the row count and canonical-key duplicate-group count per agency for the UTC
-date selected by `latest_snapshot_ts`. Both requested agencies should have
-nonzero rows for a normal complete date, and `duplicate_key_group_count` must
+the row count and canonical-key duplicate-group count for Muni for the UTC date
+selected by `latest_snapshot_ts`. Muni should have nonzero rows for a normal
+complete date, and `duplicate_key_group_count` must
 be zero. Investigate a legitimate no-service or partial-feed date rather than
 assuming its expected count.
 
@@ -183,7 +181,7 @@ bq --project_id="$PROJECT_ID" query \
        COUNT(*) AS key_count
      FROM \`$PROJECT_ID.$DATASET.$TARGET_TABLE\`
      WHERE DATE(latest_snapshot_ts) = @source_date
-       AND agency_id IN ('muni', 'bart')
+       AND agency_id = 'muni'
      GROUP BY
        agency_id,
        trip_id,
