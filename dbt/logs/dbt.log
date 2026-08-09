@@ -1,0 +1,145 @@
+[0m16:39:44.806238 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'start', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x106a21c70>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x107a5e030>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x107a5dd90>]}
+
+
+============================== 16:39:44.808184 | 635f356f-53fd-4374-a628-a0199c80672c ==============================
+[0m16:39:44.808184 [info ] [MainThread]: Running with dbt=1.12.0
+[0m16:39:44.808461 [debug] [MainThread]: running dbt with arguments {'cache_selected_only': 'False', 'log_format': 'default', 'write_json': 'True', 'target_path': 'None', 'indirect_selection': 'eager', 'log_path': 'logs', 'send_anonymous_usage_stats': 'True', 'warn_error_options': 'WarnErrorOptionsV2(error=[], warn=[], silence=[])', 'no_print': 'None', 'maximum_seed_size_mib': '1', 'invocation_command': 'dbt init neighborhood_nachos', 'hints_enabled': 'True', 'profiles_dir': '/Users/chantelle/.dbt', 'static_parser': 'True', 'use_experimental_parser': 'False', 'fail_fast': 'False', 'introspect': 'True', 'printer_width': '80', 'empty': 'None', 'partial_parse': 'True', 'debug': 'False', 'quiet': 'False', 'warn_error': 'None', 'use_colors': 'True', 'version_check': 'True', 'log_cache_events': 'False'}
+[0m16:39:44.813170 [debug] [MainThread]: Starter project path: /opt/anaconda3/envs/dbt_env/lib/python3.12/site-packages/dbt/include/starter_project
+[0m16:39:44.815675 [info ] [MainThread]: Setting up your profile.
+[0m16:40:22.186613 [info ] [MainThread]: Profile neighborhood_nachos written to /Users/chantelle/.dbt/profiles.yml using target's profile_template.yml and your supplied values.
+[0m16:40:22.188893 [info ] [MainThread]: Running dbt debug to validate the project...
+[0m16:40:22.189943 [info ] [MainThread]: dbt version: 1.12.0
+[0m16:40:22.190335 [info ] [MainThread]: python version: 3.12.13
+[0m16:40:22.190657 [info ] [MainThread]: python path: /opt/anaconda3/envs/dbt_env/bin/python
+[0m16:40:22.190966 [info ] [MainThread]: os info: macOS-26.3.1-arm64-arm-64bit
+[0m16:40:22.236461 [info ] [MainThread]: Using profiles dir at /Users/chantelle/.dbt
+[0m16:40:22.236797 [info ] [MainThread]: Using profiles.yml file at /Users/chantelle/.dbt/profiles.yml
+[0m16:40:22.236988 [info ] [MainThread]: Using dbt_project.yml file at /Users/chantelle/Documents/MSDS/Summerrrr/DataArchitecture/neighborhood_nachos/dbt/neighborhood_nachos/dbt_project.yml
+[0m16:40:22.237155 [info ] [MainThread]: adapter type: bigquery
+[0m16:40:22.237304 [info ] [MainThread]: adapter version: 1.12.0
+[0m16:40:22.287690 [info ] [MainThread]: Configuration:
+[0m16:40:22.287923 [info ] [MainThread]:   profiles.yml file [[32mOK found and valid[0m]
+[0m16:40:22.288054 [info ] [MainThread]:   dbt_project.yml file [[32mOK found and valid[0m]
+[0m16:40:22.288172 [info ] [MainThread]: Required dependencies:
+[0m16:40:22.288369 [debug] [MainThread]: Executing "git --help"
+[0m16:40:22.296249 [debug] [MainThread]: STDOUT: "b"usage: git [-v | --version] [-h | --help] [-C <path>] [-c <name>=<value>]\n           [--exec-path[=<path>]] [--html-path] [--man-path] [--info-path]\n           [-p | --paginate | -P | --no-pager] [--no-replace-objects] [--no-lazy-fetch]\n           [--no-optional-locks] [--no-advice] [--bare] [--git-dir=<path>]\n           [--work-tree=<path>] [--namespace=<name>] [--config-env=<name>=<envvar>]\n           <command> [<args>]\n\nThese are common Git commands used in various situations:\n\nstart a working area (see also: git help tutorial)\n   clone      Clone a repository into a new directory\n   init       Create an empty Git repository or reinitialize an existing one\n\nwork on the current change (see also: git help everyday)\n   add        Add file contents to the index\n   mv         Move or rename a file, a directory, or a symlink\n   restore    Restore working tree files\n   rm         Remove files from the working tree and from the index\n\nexamine the history and state (see also: git help revisions)\n   bisect     Use binary search to find the commit that introduced a bug\n   diff       Show changes between commits, commit and working tree, etc\n   grep       Print lines matching a pattern\n   log        Show commit logs\n   show       Show various types of objects\n   status     Show the working tree status\n\ngrow, mark and tweak your common history\n   backfill   Download missing objects in a partial clone\n   branch     List, create, or delete branches\n   commit     Record changes to the repository\n   merge      Join two or more development histories together\n   rebase     Reapply commits on top of another base tip\n   reset      Reset current HEAD to the specified state\n   switch     Switch branches\n   tag        Create, list, delete or verify a tag object signed with GPG\n\ncollaborate (see also: git help workflows)\n   fetch      Download objects and refs from another repository\n   pull       Fetch from and integrate with another repository or a local branch\n   push       Update remote refs along with associated objects\n\n'git help -a' and 'git help -g' list available subcommands and some\nconcept guides. See 'git help <command>' or 'git help <concept>'\nto read about a specific subcommand or concept.\nSee 'git help git' for an overview of the system.\n""
+[0m16:40:22.296673 [debug] [MainThread]: STDERR: "b''"
+[0m16:40:22.296814 [info ] [MainThread]:  - git [[32mOK found[0m]
+
+[0m16:40:22.296960 [info ] [MainThread]: Connection:
+[0m16:40:22.297114 [info ] [MainThread]:   method: oauth
+[0m16:40:22.297235 [info ] [MainThread]:   database: neighboorhood-nachos
+[0m16:40:22.297349 [info ] [MainThread]:   execution_project: neighboorhood-nachos
+[0m16:40:22.297463 [info ] [MainThread]:   schema: neighborhood_livability_gold
+[0m16:40:22.297572 [info ] [MainThread]:   location: US
+[0m16:40:22.297681 [info ] [MainThread]:   priority: interactive
+[0m16:40:22.297786 [info ] [MainThread]:   maximum_bytes_billed: None
+[0m16:40:22.297894 [info ] [MainThread]:   reservation: None
+[0m16:40:22.298002 [info ] [MainThread]:   impersonate_service_account: None
+[0m16:40:22.298108 [info ] [MainThread]:   job_retry_deadline_seconds: None
+[0m16:40:22.298215 [info ] [MainThread]:   job_retries: 1
+[0m16:40:22.298321 [info ] [MainThread]:   job_creation_timeout_seconds: None
+[0m16:40:22.298429 [info ] [MainThread]:   job_execution_timeout_seconds: 300
+[0m16:40:22.298535 [info ] [MainThread]:   job_link_info_level_log: False
+[0m16:40:22.298643 [info ] [MainThread]:   timeout_seconds: 300
+[0m16:40:22.298752 [info ] [MainThread]:   client_id: None
+[0m16:40:22.298858 [info ] [MainThread]:   token_uri: None
+[0m16:40:22.298964 [info ] [MainThread]:   compute_region: None
+[0m16:40:22.299070 [info ] [MainThread]:   dataproc_cluster_name: None
+[0m16:40:22.299173 [info ] [MainThread]:   gcs_bucket: None
+[0m16:40:22.299278 [info ] [MainThread]:   dataproc_batch: None
+[0m16:40:22.299541 [info ] [MainThread]: Registered adapter: bigquery=1.12.0
+[0m16:40:22.360674 [debug] [MainThread]: Acquiring new bigquery connection 'debug'
+[0m16:40:22.360948 [debug] [MainThread]: On debug: select 1 as id
+[0m16:40:22.361129 [debug] [MainThread]: Opening a new connection, currently in state init
+[0m16:40:23.318423 [debug] [MainThread]: BigQuery adapter: https://console.cloud.google.com/bigquery?project=neighboorhood-nachos&j=bq:US:acfc8bca-47e0-4caf-b9a7-a6678099bb03&page=queryresults
+[0m16:40:23.683522 [debug] [MainThread]: SQL status: OK in 0.363 seconds
+[0m16:40:23.993930 [info ] [MainThread]:   Connection test: [[32mOK connection ok[0m]
+
+[0m16:40:23.995027 [info ] [MainThread]: [32mAll checks passed![0m
+[0m16:40:23.996137 [info ] [MainThread]: Your new dbt project "neighborhood_nachos" was created!
+Initialized new project in /Users/chantelle/Documents/MSDS/Summerrrr/DataArchitecture/neighborhood_nachos/dbt/neighborhood_nachos/neighborhood_nachos
+
+For more information on how to configure the profiles.yml file,
+please consult the dbt documentation here:
+
+  https://docs.getdbt.com/docs/configure-your-profile
+
+One more thing:
+
+Need help? Don't hesitate to reach out to us via GitHub issues or on Slack:
+
+  https://community.getdbt.com/
+
+Happy modeling!
+
+[0m16:40:24.003069 [debug] [MainThread]: Resource report: {"command_name": "init", "command_success": true, "command_wall_clock_time": 39.23589, "process_in_blocks": "0", "process_kernel_time": 0.230094, "process_mem_max_rss": "237912064", "process_out_blocks": "0", "process_user_time": 1.194183}
+[0m16:40:24.004036 [debug] [MainThread]: Command `dbt init` succeeded at 16:40:24.003876 after 39.24 seconds
+[0m16:40:24.004526 [debug] [MainThread]: Connection 'debug' was properly closed.
+[0m16:40:24.005020 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10687d1f0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x126204f80>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x125ce6c00>]}
+[0m16:40:24.005579 [debug] [MainThread]: Flushing usage events
+[0m16:40:24.374076 [debug] [MainThread]: An error was encountered while trying to flush usage events
+[0m16:42:39.802179 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'start', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x112898920>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x113661eb0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x113661c40>]}
+
+
+============================== 16:42:39.804252 | 52096c9a-f609-4def-9672-3c5f85c96c3b ==============================
+[0m16:42:39.804252 [info ] [MainThread]: Running with dbt=1.12.0
+[0m16:42:39.804540 [debug] [MainThread]: running dbt with arguments {'introspect': 'True', 'partial_parse': 'True', 'warn_error_options': 'WarnErrorOptionsV2(error=[], warn=[], silence=[])', 'quiet': 'False', 'use_colors': 'True', 'cache_selected_only': 'False', 'log_format': 'default', 'indirect_selection': 'eager', 'profiles_dir': '/Users/chantelle/.dbt', 'version_check': 'True', 'invocation_command': 'dbt debug', 'no_print': 'None', 'debug': 'False', 'warn_error': 'None', 'target_path': 'None', 'fail_fast': 'False', 'hints_enabled': 'True', 'use_experimental_parser': 'False', 'log_cache_events': 'False', 'maximum_seed_size_mib': '1', 'printer_width': '80', 'static_parser': 'True', 'send_anonymous_usage_stats': 'True', 'empty': 'None', 'log_path': 'logs', 'write_json': 'True'}
+[0m16:42:39.809171 [info ] [MainThread]: dbt version: 1.12.0
+[0m16:42:39.809327 [info ] [MainThread]: python version: 3.12.13
+[0m16:42:39.809453 [info ] [MainThread]: python path: /opt/anaconda3/envs/dbt_env/bin/python
+[0m16:42:39.809570 [info ] [MainThread]: os info: macOS-26.3.1-arm64-arm-64bit
+[0m16:42:40.211068 [info ] [MainThread]: Using profiles dir at /Users/chantelle/.dbt
+[0m16:42:40.211317 [info ] [MainThread]: Using profiles.yml file at /Users/chantelle/.dbt/profiles.yml
+[0m16:42:40.211465 [info ] [MainThread]: Using dbt_project.yml file at /Users/chantelle/Documents/MSDS/Summerrrr/DataArchitecture/neighborhood_nachos/dbt/dbt_project.yml
+[0m16:42:40.211598 [info ] [MainThread]: adapter type: bigquery
+[0m16:42:40.211716 [info ] [MainThread]: adapter version: 1.12.0
+[0m16:42:40.211859 [info ] [MainThread]: Configuration:
+[0m16:42:40.211974 [info ] [MainThread]:   profiles.yml file [[32mOK found and valid[0m]
+[0m16:42:40.212087 [info ] [MainThread]:   dbt_project.yml file [[31mERROR not found[0m]
+[0m16:42:40.212200 [info ] [MainThread]: Required dependencies:
+[0m16:42:40.212363 [debug] [MainThread]: Executing "git --help"
+[0m16:42:40.221288 [debug] [MainThread]: STDOUT: "b"usage: git [-v | --version] [-h | --help] [-C <path>] [-c <name>=<value>]\n           [--exec-path[=<path>]] [--html-path] [--man-path] [--info-path]\n           [-p | --paginate | -P | --no-pager] [--no-replace-objects] [--no-lazy-fetch]\n           [--no-optional-locks] [--no-advice] [--bare] [--git-dir=<path>]\n           [--work-tree=<path>] [--namespace=<name>] [--config-env=<name>=<envvar>]\n           <command> [<args>]\n\nThese are common Git commands used in various situations:\n\nstart a working area (see also: git help tutorial)\n   clone      Clone a repository into a new directory\n   init       Create an empty Git repository or reinitialize an existing one\n\nwork on the current change (see also: git help everyday)\n   add        Add file contents to the index\n   mv         Move or rename a file, a directory, or a symlink\n   restore    Restore working tree files\n   rm         Remove files from the working tree and from the index\n\nexamine the history and state (see also: git help revisions)\n   bisect     Use binary search to find the commit that introduced a bug\n   diff       Show changes between commits, commit and working tree, etc\n   grep       Print lines matching a pattern\n   log        Show commit logs\n   show       Show various types of objects\n   status     Show the working tree status\n\ngrow, mark and tweak your common history\n   backfill   Download missing objects in a partial clone\n   branch     List, create, or delete branches\n   commit     Record changes to the repository\n   merge      Join two or more development histories together\n   rebase     Reapply commits on top of another base tip\n   reset      Reset current HEAD to the specified state\n   switch     Switch branches\n   tag        Create, list, delete or verify a tag object signed with GPG\n\ncollaborate (see also: git help workflows)\n   fetch      Download objects and refs from another repository\n   pull       Fetch from and integrate with another repository or a local branch\n   push       Update remote refs along with associated objects\n\n'git help -a' and 'git help -g' list available subcommands and some\nconcept guides. See 'git help <command>' or 'git help <concept>'\nto read about a specific subcommand or concept.\nSee 'git help git' for an overview of the system.\n""
+[0m16:42:40.221688 [debug] [MainThread]: STDERR: "b''"
+[0m16:42:40.221816 [info ] [MainThread]:  - git [[32mOK found[0m]
+
+[0m16:42:40.221953 [info ] [MainThread]: Connection:
+[0m16:42:40.222102 [info ] [MainThread]:   method: oauth
+[0m16:42:40.222218 [info ] [MainThread]:   database: neighboorhood-nachos
+[0m16:42:40.222329 [info ] [MainThread]:   execution_project: neighboorhood-nachos
+[0m16:42:40.222447 [info ] [MainThread]:   schema: neighborhood_livability_gold
+[0m16:42:40.222555 [info ] [MainThread]:   location: US
+[0m16:42:40.222675 [info ] [MainThread]:   priority: interactive
+[0m16:42:40.222783 [info ] [MainThread]:   maximum_bytes_billed: None
+[0m16:42:40.222891 [info ] [MainThread]:   reservation: None
+[0m16:42:40.222999 [info ] [MainThread]:   impersonate_service_account: None
+[0m16:42:40.223104 [info ] [MainThread]:   job_retry_deadline_seconds: None
+[0m16:42:40.223210 [info ] [MainThread]:   job_retries: 1
+[0m16:42:40.223318 [info ] [MainThread]:   job_creation_timeout_seconds: None
+[0m16:42:40.223423 [info ] [MainThread]:   job_execution_timeout_seconds: 300
+[0m16:42:40.223531 [info ] [MainThread]:   job_link_info_level_log: False
+[0m16:42:40.223636 [info ] [MainThread]:   timeout_seconds: 300
+[0m16:42:40.223740 [info ] [MainThread]:   client_id: None
+[0m16:42:40.223843 [info ] [MainThread]:   token_uri: None
+[0m16:42:40.223949 [info ] [MainThread]:   compute_region: None
+[0m16:42:40.224053 [info ] [MainThread]:   dataproc_cluster_name: None
+[0m16:42:40.224161 [info ] [MainThread]:   gcs_bucket: None
+[0m16:42:40.224265 [info ] [MainThread]:   dataproc_batch: None
+[0m16:42:40.224511 [info ] [MainThread]: Registered adapter: bigquery=1.12.0
+[0m16:42:40.285478 [debug] [MainThread]: Acquiring new bigquery connection 'debug'
+[0m16:42:40.285755 [debug] [MainThread]: On debug: select 1 as id
+[0m16:42:40.285968 [debug] [MainThread]: Opening a new connection, currently in state init
+[0m16:42:41.204875 [debug] [MainThread]: BigQuery adapter: https://console.cloud.google.com/bigquery?project=neighboorhood-nachos&j=bq:US:0fcf3c6a-5f48-481f-bbf3-daf791e8c759&page=queryresults
+[0m16:42:41.511717 [debug] [MainThread]: SQL status: OK in 0.305 seconds
+[0m16:42:41.787643 [info ] [MainThread]:   Connection test: [[32mOK connection ok[0m]
+
+[0m16:42:41.788768 [info ] [MainThread]: [31m1 check failed:[0m
+[0m16:42:41.789267 [info ] [MainThread]: Project loading failed for the following reason:
+ project path </Users/chantelle/Documents/MSDS/Summerrrr/DataArchitecture/neighborhood_nachos/dbt/dbt_project.yml> not found
+
+[0m16:42:41.796609 [debug] [MainThread]: Resource report: {"command_name": "debug", "command_success": false, "command_wall_clock_time": 2.0356488, "process_in_blocks": "0", "process_kernel_time": 0.21109, "process_mem_max_rss": "231817216", "process_out_blocks": "0", "process_user_time": 1.086229}
+[0m16:42:41.797494 [debug] [MainThread]: Command `dbt debug` failed at 16:42:41.797353 after 2.04 seconds
+[0m16:42:41.797923 [debug] [MainThread]: Connection 'debug' was properly closed.
+[0m16:42:41.798367 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x117fdc470>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x127cbb7a0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x130abe7b0>]}
+[0m16:42:41.798830 [debug] [MainThread]: Flushing usage events
+[0m16:42:42.219451 [debug] [MainThread]: An error was encountered while trying to flush usage events
