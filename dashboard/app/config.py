@@ -25,6 +25,10 @@ class AppConfig:
     # not the same warehouse the existing dashboard reads from.
     agent_enabled: bool = True
     agent_dataset: str = "neighborhood_livability_gold"
+    # Optional absolute path override for the analyst-editable semantics
+    # markdown file. If unset, the introspector falls back to
+    # `dashboard/app/gold_semantics.md` in the container.
+    agent_semantics_file: str = ""
     llm_project: str = ""
     llm_location: str = "us-central1"
     llm_model: str = "gemini-2.5-flash"
@@ -54,6 +58,7 @@ class AppConfig:
             cache_max_entries=int(os.getenv("DASH_CACHE_MAX_ENTRIES", "512")),
             agent_enabled=_env_bool("DASH_AGENT_ENABLED", default=True),
             agent_dataset=os.getenv("DASH_AGENT_DATASET", "neighborhood_livability_gold").strip(),
+            agent_semantics_file=os.getenv("DASH_AGENT_SEMANTICS_FILE", "").strip(),
             llm_project=os.getenv("DASH_LLM_PROJECT", bq_project).strip(),
             llm_location=os.getenv("DASH_LLM_LOCATION", "us-central1").strip(),
             llm_model=os.getenv("DASH_LLM_MODEL", "gemini-2.5-flash").strip(),

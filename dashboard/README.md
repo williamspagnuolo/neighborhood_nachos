@@ -70,6 +70,9 @@ Text-to-SQL agent overrides:
 
 - `DASH_AGENT_ENABLED` (default `true`, set to `false` to hide the tab)
 - `DASH_AGENT_DATASET` (default `neighborhood_livability_gold`)
+- `DASH_AGENT_SEMANTICS_FILE` (default: `dashboard/app/gold_semantics.md`
+  inside the container). Optional absolute path override for the
+  analyst-editable markdown file the agent folds into its system prompt.
 - `DASH_LLM_PROJECT` (default same as `DASH_BQ_PROJECT`)
 - `DASH_LLM_LOCATION` (default `us-central1`) — Vertex AI region
 - `DASH_LLM_MODEL` (default `gemini-2.5-flash`)
@@ -204,15 +207,37 @@ Flow:
 
 1. User types a question (e.g. "Which neighborhoods had the most 311
    requests in the last 7 days?").
-2. **Generate SQL** — the agent introspects the gold dataset's schema
-   from `INFORMATION_SCHEMA.COLUMNS`, prompts Gemini, parses the returned
-   JSON, validates the SQL, applies a row cap if needed, and runs a
-   BigQuery dry-run to estimate bytes scanned.
+2. **Generate SQL** — the agent introspects the gold dataset (schema,
+   per-table row counts, dataset / table / column descriptions from BQ
+   metadata, plus the `dashboard/app/gold_semantics.md` file), prompts
+   Gemini, parses the returned JSON, validates the SQL, applies a row
+   cap if needed, and runs a BigQuery dry-run to estimate bytes scanned.
 3. The generated SQL and byte estimate are shown to the user, along with
    the model's own short explanation.
 4. **Run query** — the validated SQL is executed with
    `maximum_bytes_billed=DASH_LLM_MAX_BYTES_BILLED` and results appear in
    a paginated table.
+
+### How to improve the agent's answers
+
+Two channels, both take effect on the next container restart — no
+Python changes needed:
+
+- **BigQuery metadata** (preferred for per-table / per-column facts):
+  ```sql
+  ALTER TABLE `neighboorhood-nachos.neighborhood_livability_gold.<table>`
+  SET OPTIONS (description = 'One row per ...');
+
+  ALTER TABLE `neighboorhood-nachos.neighborhood_livability_gold.<table>`
+  ALTER COLUMN <col> SET OPTIONS (description = '...');
+  ```
+  The agent picks these up automatically via
+  `INFORMATION_SCHEMA.COLUMN_FIELD_PATHS` and `TABLE_OPTIONS`.
+
+- **`dashboard/app/gold_semantics.md`** (preferred for cross-table
+  conventions, business definitions, and query patterns): edit this
+  markdown file in a normal PR. It ships in the container image and gets
+  folded verbatim into the agent's system prompt.
 
 Guardrails:
 
