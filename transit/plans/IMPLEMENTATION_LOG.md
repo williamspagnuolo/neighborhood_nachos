@@ -714,3 +714,103 @@ Append entries using this template. Keep previous entries intact.
 **Documentation correction**
 
 - `transit/plans/BACKFILL_RUNBOOK.md`: corrected `gcloud run jobs executions list` to use the current CLI's required `--job <name>` flag. The prior positional-job form was rejected locally before making any cloud request.
+
+### Deployment scope correction — Muni-only workflow — 2026-08-08
+
+**Status:** `COMPLETE` locally; Workflow redeployment remains an external action.
+
+**Trigger and findings**
+
+- In the `2026-07-07` integration run, the Muni parsers, join, and BigQuery
+  upsert reached successful Cloud Run execution states before the Workflow
+  advanced to BART.
+- Both BART parser executions finished with seven of eight tasks successful.
+  VehiclePositions logs confirmed that all 1,440 protobuf snapshots parsed with
+  zero blob failures, but every task produced `latest_keys=0`. The task-zero
+  leader therefore rejected the globally empty result. This is a data-contract
+  incompatibility rather than the earlier join-memory failure.
+- The owner decided BART is not required for the current product and approved a
+  Muni-only daily transformation workflow.
+
+**Confirmed operational decision**
+
+- The Workflow defaults to `agencies: ["muni"]` and rejects any non-Muni agency
+  before invoking a Cloud Run Job. Manual backfills explicitly submit Muni only.
+- The parameterized Cloud Run Job code and agency-scoped storage paths remain in
+  place. This avoids destructive cleanup and leaves room for a separately
+  designed BART investigation later.
+- This decision changes daily transformation only. The independent minute-ingest
+  service continues collecting BART raw snapshots until the owner separately
+  authorizes an ingestion change.
+
+**Changes made**
+
+- `transit/orchestration/workflow.yaml`: changed the default and allowlist to
+  Muni only.
+- `transit/app/tests/test_pipeline_failures.py`: added regression assertions for
+  the Muni-only default and allowlist.
+- `transit/orchestration/README.md`, `transit/plans/PIPELINE_CONTRACT.md`,
+  `transit/plans/TEST_AND_ACCEPTANCE_PLAN.md`, and
+  `transit/plans/BACKFILL_RUNBOOK.md`: aligned deployment, acceptance, invocation,
+  raw-input checks, and BigQuery validation with the Muni-only scope.
+
+**Verification performed**
+
+- `ruby -e 'require "yaml"; YAML.load_file("transit/orchestration/workflow.yaml")'`:
+  passed.
+- `/Users/patri/miniconda3/envs/env_transit/bin/python -m unittest discover -s transit/app/tests -p 'test_*.py' -v`:
+  30 tests passed.
+- `git diff --check`: passed.
+
+**Assumptions, deviations, and remaining external actions**
+
+- No Cloud Run Job, image, IAM policy, Scheduler resource, GCS object, or BigQuery
+  data was changed. No BART objects were deleted.
+- Redeploy only `transit/orchestration/workflow.yaml`; no image rebuild or Cloud
+  Run Job update is required. Then execute one Muni-only historical date and run
+  the documented BigQuery validation. The observed successful Muni loader state
+  does not replace row-count and duplicate-key validation.
+
+### Minute-ingest raw-only correction — 2026-08-08
+
+**Status:** `DEPLOYED AND VERIFIED`; historical object cleanup remains a
+separate external action.
+
+**Trigger and findings**
+
+- The active minute-ingest code uploaded each protobuf snapshot to its immutable
+  dated `raw/` path, then copied the same snapshot to a flat timestamped path
+  under `latest/`.
+- Repository consumers read protobuf only from dated `raw/` paths. The daily
+  pipeline uses `latest/` for date-partitioned parquet outputs; no repository
+  consumer of the flat protobuf copies was found.
+
+**Changes made**
+
+- `transit/app/upload_transit_to_bucket.py`: made the legacy copy conditional on
+  `TRANSIT_COPY_RAW_TO_LATEST`, defaulting to false. Raw upload behavior is
+  unchanged, and the flag provides a fast compatibility rollback.
+- `transit/app/jobs/ingest.env.yaml`: explicitly disables the legacy copy.
+- `transit/app/tests/test_minute_ingest.py`: covers raw-only default behavior,
+  explicit legacy re-enablement, and strict flag parsing.
+- `transit/app/jobs/README.md`: documents the separate raw protobuf and derived
+  parquet responsibilities.
+
+**Deployment and verification**
+
+- The owner built a uniquely tagged ingestion-service image and deployed Cloud
+  Run service revision `transit-minute-ingest-00002-7xq` with
+  `TRANSIT_COPY_RAW_TO_LATEST=false`; it received 100 percent of service traffic.
+- Cloud Logging showed an authenticated scheduled `POST` returning HTTP 200 on
+  the new revision. The owner then confirmed across subsequent scheduled polls
+  that dated raw protobuf objects continued to advance while flat protobuf
+  objects under `latest/` stopped advancing.
+- The previous immutable Cloud Run revision remains available for traffic
+  rollback. No Scheduler resource, secret mapping, IAM policy, existing GCS
+  object, or BigQuery data was changed during this correction.
+
+**Remaining external action**
+
+- Before deleting existing flat protobuf copies, separately confirm that no
+  consumer outside this repository depends on them and use an exact `.pb`-only
+  target that cannot match dated parquet output.

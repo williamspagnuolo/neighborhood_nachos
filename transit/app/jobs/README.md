@@ -96,6 +96,13 @@ Cloud Scheduler transit-minute-ingest-poll
      -> upload_transit_to_bucket.run_once_from_env()
 ```
 
+The ingestion service writes immutable protobuf snapshots only to
+`raw/<Feed>/<agency>/<UTC date>/<timestamp>.pb`. The legacy flat copy under
+`latest/<Feed>/<agency>/<timestamp>.pb` is disabled by default with
+`TRANSIT_COPY_RAW_TO_LATEST=false`; set it to `true` only for a confirmed
+external compatibility requirement. Date-partitioned parquet outputs under
+`latest/` are produced by the daily transformation jobs and are unaffected.
+
 It uses these Secret Manager mappings:
 
 | Environment variable | Secret name |

@@ -1,5 +1,5 @@
 # One UTC source-date execution. Runtime input example:
-# {"source_date":"2026-06-23","agencies":["muni","bart"]}
+# {"source_date":"2026-06-23","agencies":["muni"]}
 # The workflow identity needs run.jobs.runWithOverrides on these four jobs.
 main:
   params: [input]
@@ -14,7 +14,7 @@ main:
           - today_utc: ${text.substring(time.format(sys.now(), "UTC"), 0, 10)}
           - default_source_date: ${text.substring(time.format(sys.now() - 86400, "UTC"), 0, 10)}
           - source_date: ${default(map.get(input_map, "source_date"), default_source_date)}
-          - agencies: ${default(map.get(input_map, "agencies"), ["muni", "bart"])}
+          - agencies: ${default(map.get(input_map, "agencies"), ["muni"])}
           - results: []
     - validate_date_shape:
         switch:
@@ -41,8 +41,8 @@ main:
           steps:
             - reject_unsupported_agency:
                 switch:
-                  - condition: ${not(agency in ["muni", "bart"])}
-                    raise: ${"agency must be muni or bart; got " + agency}
+                  - condition: ${not(agency in ["muni"])}
+                    raise: ${"agency must be muni; got " + agency}
     - run_agencies_sequentially:
         for:
           value: agency

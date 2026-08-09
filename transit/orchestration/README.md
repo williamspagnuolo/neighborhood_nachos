@@ -16,7 +16,7 @@ TARGET_TABLE=trip_stops
 ```
 
 The daily cron is intentionally a placeholder: the plans do not establish when
-both UTC raw-feed folders are reliably complete. Choose and approve that time
+the Muni UTC raw-feed folders are reliably complete. Choose and approve that time
 before creating Scheduler.
 
 Read-only checks:
@@ -105,8 +105,11 @@ bash transit/orchestration/deploy_workflow.sh --project "$PROJECT_ID" --region "
 gcloud workflows add-iam-policy-binding "$WORKFLOW_NAME" --project "$PROJECT_ID" --location "$REGION" --member "serviceAccount:$SCHEDULER_SA" --role roles/workflows.invoker
 ```
 
-After successful development runs for both agencies, create one Scheduler job.
-This is a **Scheduler mutation**. Supply an approved UTC cron, not a guess.
+After a successful development run for Muni, create one Scheduler job. The
+workflow defaults to Muni and rejects other agencies; BART processing is deferred
+because its VehiclePositions feed did not provide rows compatible with the
+approved canonical key during the initial integration run. This is a
+**Scheduler mutation**. Supply an approved UTC cron, not a guess.
 
 ```bash
 export SCHEDULE_CRON_UTC="<approved-daily-cron>"
