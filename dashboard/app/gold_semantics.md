@@ -22,24 +22,118 @@ here only when they don't naturally fit on a single table or column.
 ## Time contract
 - All TIMESTAMP columns in the gold dataset are stored in UTC.
 - Users of the dashboard think in Pacific Time (`America/Los_Angeles`).
-  Convert on the boundary: use `DATE(ts, "America/Los_Angeles")` for
-  Pacific-date grouping and `TIMESTAMP(datetime_value, "America/Los_Angeles")`
-  when a Pacific-local timestamp is required.
+- For normal date filtering and grouping, prefer the precomputed
+  `event_date_pacific` column.
+- For normal time-of-day filtering, prefer the precomputed
+  `event_time_pacific` column.
+- Use `event_ts_utc` when an exact timestamp or UTC comparison is required.
+- Only derive Pacific-local values from a UTC timestamp when the existing
+  Pacific date/time columns cannot answer the question.
+- When conversion is necessary, explicitly use the
+  `America/Los_Angeles` timezone.
 
-## Boundary conventions
-- Every point-based fact table is expected to carry both
-  `neighborhood_id` and `police_district_id` foreign keys, populated
-  upstream via spatial joins against the `neighborhoods` and
-  `police_districts` polygon tables.
-- Prefer joining on those integer FKs. Do not attempt ad-hoc
-  point-in-polygon joins from the agent — the boundary tables' `geometry`
-  column is stored as WKT text and joining against it is expensive.
+## Preferred analytical models
+- For dashboard and general analytical questions, prefer these curated dbt mart tables:
+  - `gold_dashboard_events`
+  - `gold_boundaries`
+
+- Do not use `stage_*` or `int_*` models unless the requested information cannot be answered from the gold marts.
+
+### gold_dashboard_events
+
+- **One row represents one source fact record used by the dashboard.**
+
+- `event_type` identifies the domain:
+  - `311`
+  - `police`
+  - `transit`
+
+- `category` contains the normalized service/category value for 311 and police events.
+- Transit-specific fields such as `arrival_delay_sec` are populated only when `event_type = 'transit'`.
+- All timestamps are UTC in `event_ts_utc`.
+- `event_date_pacific` and `event_time_pacific` provide Pacific-local calendar values for dashboard filtering.
+
+### gold_boundaries
+
+- **Contains both neighborhood and police-district boundaries.**
+
+- `boundary_type` is either:
+  - `neighborhoods`
+  - `police_districts`
+
+- Rows with NULL geometry represent the intentional unlocated/unknown boundary member and should be retained for analytics but not rendered on maps.
+
+## Boundary Conventions
+**`gold_dashboard_events` contains both:**
+
+- `neighborhood_id`
+- `police_district_id`
+
+Both columns are STRING identifiers.
+
+`gold_boundaries.boundary_id` is also a STRING identifier.
+
+Boundary IDs must **always** be treated as strings in SQL.
+
+**Correct:**
+
+neighborhood_id = '5'
+police_district_id = '3'
+boundary_id = '5'
+
+**Incorrect:**
+
+neighborhood_id = 5
+police_district_id = 3
+boundary_id = 5
+
+Do not compare STRING boundary identifiers to INT64 literals.
+
+### gold_boundaries
+
+- `gold_boundaries` contains both neighborhood and police-district dimension records.
+  - `boundary_type` identifies the boundary system.
+  - Expected values are:
+    - 'neighborhoods'
+    - 'police_districts'
+  - Use `boundary_name` for the human-readable boundary name.
+  - Use `boundary_id` to join to the corresponding foreign key in `gold_dashboard_events`.
+
+**Neighborhood joins**
+
+- To retrieve neighborhood names:
+
+    FROM gold_dashboard_events AS e
+    JOIN gold_boundaries AS b
+      ON e.neighborhood_id = b.boundary_id
+    AND b.boundary_type = 'neighborhoods'
+    Police-district joins
+
+- To retrieve police-district names:
+
+    FROM gold_dashboard_events AS e
+    JOIN gold_boundaries AS b
+      ON e.police_district_id = b.boundary_id
+    AND b.boundary_type = 'police_districts'
+
+- Do not perform point-in-polygon or other spatial joins for normal analytical questions. Boundary membership has already been assigned upstream.
+- Some boundary rows intentionally have NULL geometry to represent unknown/unlocated events. These rows are valid analytical dimension members.
+- Do not discard them from counts merely because geometry is NULL.
+- For map or geometry-specific queries, rows with NULL geometry should not be rendered.
 
 ## Standard analytical patterns
-- **"Top N neighborhoods by X"** → `GROUP BY neighborhood_id`, `ORDER BY x DESC`,
-  `LIMIT N`, then join to `neighborhoods` for the human-readable `name`.
-- **"Over the last N days"** → filter on `DATE(<timestamp_col>, "America/Los_Angeles")
-  >= DATE_SUB(CURRENT_DATE("America/Los_Angeles"), INTERVAL N DAY)`.
+- **"Top N neighborhoods by X"** → For a question such as "Which neighborhoods have the most police incidents?"
+  - Filter gold_dashboard_events to the relevant event_type.
+  - Group by neighborhood_id.
+  - Aggregate the requested metric.
+  - Join to gold_boundaries using:
+    boundary_type = 'neighborhoods'.
+  - Order by the metric descending.
+  - Apply the requested limit.
+- Do not group by boundary_name before establishing the correct boundary-ID join.
+
+- **"Over the last N days"** → filter on:
+`event_date_pacifc` >= DATE_SUB(CURRENT_DATE("America/Los_Angeles"), INTERVAL N DAY)`
 
 ## Data-quality caveats
 - The most recent 2-3 days of any incident-source data (police, 311)
@@ -48,8 +142,3 @@ here only when they don't naturally fit on a single table or column.
   include this caveat in the answer or exclude the last 48 hours.
 
 ---
-
-## (Waiting on the gold-layer tables to be created. Add per-table
-## semantics here as the tables land, or — even better — attach them as
-## native BigQuery table / column descriptions where they'll be picked
-## up automatically.)

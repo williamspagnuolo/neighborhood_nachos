@@ -53,7 +53,7 @@ FORBIDDEN_KEYWORD_RE = re.compile(
     re.IGNORECASE,
 )
 
-STAGING_TABLE_SUFFIXES: tuple[str, ...] = ("__stage", "__staging")
+AGENT_TABLE_PREFIXES: tuple[str, ...] = ("gold_",)
 
 
 class AgentError(Exception):
@@ -290,7 +290,7 @@ ORDER BY table_name, ordinal_position
         by_table: dict[str, list[SchemaColumn]] = {}
         for row in self._client.query(sql).result():
             table = row["table_name"]
-            if table.endswith(STAGING_TABLE_SUFFIXES):
+            if not table.startswith(AGENT_TABLE_PREFIXES):
                 continue
             by_table.setdefault(table, []).append(
                 SchemaColumn(
@@ -318,7 +318,7 @@ WHERE field_path = column_name
         out: dict[tuple[str, str], str] = {}
         for row in rows:
             table = row["table_name"]
-            if table.endswith(STAGING_TABLE_SUFFIXES):
+            if not table.startswith(AGENT_TABLE_PREFIXES):
                 continue
             out[(table, row["column_name"])] = str(row["description"]).strip()
         return out
@@ -337,7 +337,7 @@ WHERE option_name = 'description'
         out: dict[str, str] = {}
         for row in rows:
             table = row["table_name"]
-            if table.endswith(STAGING_TABLE_SUFFIXES):
+            if not table.startswith(AGENT_TABLE_PREFIXES):
                 continue
             raw = str(row["option_value"] or "").strip()
             # option_value is stored as a BigQuery string literal, e.g. `"hello"`.
@@ -362,7 +362,7 @@ FROM `{self._config.bq_project}.{self._config.agent_dataset}.__TABLES__`
         out: dict[str, int] = {}
         for row in rows:
             table = row["table_name"]
-            if table.endswith(STAGING_TABLE_SUFFIXES):
+            if not table.startswith(AGENT_TABLE_PREFIXES):
                 continue
             count = row["row_count"]
             if count is None:
@@ -717,6 +717,12 @@ class TextToSqlAgent:
             raise ModelResponseError("Model did not return a `sql` field.")
 
         executable_sql = self._components.validator.validate_and_cap(raw_sql)
+
+        ##### TEMP: print in logs for debugging
+        ##### want to be able to see what goes wrong if the query doesn't fire
+        print("GENERATED SQL:")
+        print(executable_sql)
+        #####
 
         estimated = self._components.executor.dry_run(executable_sql)
         if estimated > self._components.config.llm_max_bytes_billed:
