@@ -19,6 +19,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import pathlib
 import re
 import textwrap
 import threading
@@ -84,12 +85,24 @@ class SchemaColumn:
     name: str
     data_type: str
     is_nullable: bool
+    description: str | None = None
 
 
 @dataclass(frozen=True)
 class SchemaTable:
     name: str
     columns: tuple[SchemaColumn, ...]
+    description: str | None = None
+    row_count: int | None = None
+
+
+@dataclass(frozen=True)
+class DatasetMetadata:
+    """Everything the prompt builder needs to describe the gold dataset."""
+
+    tables: tuple[SchemaTable, ...]
+    dataset_description: str | None = None
+    semantics_notes: str | None = None
 
 
 @dataclass(frozen=True)
@@ -115,26 +128,156 @@ class QueryResult:
 
 
 # ---------------------------------------------------------------------------
+# Analyst-authored semantics file
+# ---------------------------------------------------------------------------
+
+
+class SemanticsLoader:
+    """Reads an optional analyst-editable markdown file included in the prompt.
+
+    The file lives alongside the app code (default:
+    `dashboard/app/gold_semantics.md`) so it ships in the container and can be
+    edited by any teammate via a normal code review, without touching Python.
+    """
+
+    def __init__(self, file_path: pathlib.Path | None) -> None:
+        self._path = file_path
+
+    def load(self) -> str | None:
+        if self._path is None:
+            return None
+        try:
+            text = self._path.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            LOGGER.info("Semantics file not present at %s; skipping.", self._path)
+            return None
+        except OSError as exc:
+            LOGGER.warning("Could not read semantics file %s: %s", self._path, exc)
+            return None
+        return text or None
+
+
+# ---------------------------------------------------------------------------
 # Schema introspection
 # ---------------------------------------------------------------------------
 
 
 class SchemaIntrospector:
-    """Reads `INFORMATION_SCHEMA.COLUMNS` for the gold dataset (once, cached)."""
+    """Loads rich schema + metadata for the gold dataset (once, cached).
 
-    def __init__(self, client: bigquery.Client, config: AppConfig) -> None:
+    Combines four cheap INFORMATION_SCHEMA / metadata calls:
+      - `INFORMATION_SCHEMA.COLUMNS`            (name / type / nullable)
+      - `INFORMATION_SCHEMA.COLUMN_FIELD_PATHS` (per-column descriptions)
+      - `INFORMATION_SCHEMA.TABLE_OPTIONS`      (per-table descriptions)
+      - `__TABLES__`                            (row counts)
+    Plus a `get_dataset()` for the dataset-level description, and an
+    optional analyst-authored markdown file for extra context.
+    """
+
+    def __init__(
+        self,
+        client: bigquery.Client,
+        config: AppConfig,
+        semantics_loader: SemanticsLoader | None = None,
+    ) -> None:
         self._client = client
         self._config = config
+        self._semantics_loader = semantics_loader
         self._lock = threading.Lock()
-        self._cached: tuple[SchemaTable, ...] | None = None
+        self._cached: DatasetMetadata | None = None
         self._cached_at: float | None = None
 
-    def load(self, refresh: bool = False) -> tuple[SchemaTable, ...]:
+    def load(self, refresh: bool = False) -> DatasetMetadata:
         with self._lock:
             if self._cached is not None and not refresh:
                 return self._cached
 
-            sql = f"""
+            columns_by_table = self._load_columns()
+            descriptions_by_col = self._load_column_descriptions()
+            descriptions_by_table = self._load_table_descriptions()
+            row_counts_by_table = self._load_row_counts()
+
+            tables: list[SchemaTable] = []
+            for table_name, cols in sorted(columns_by_table.items()):
+                enriched_cols = tuple(
+                    SchemaColumn(
+                        name=col.name,
+                        data_type=col.data_type,
+                        is_nullable=col.is_nullable,
+                        description=descriptions_by_col.get((table_name, col.name)),
+                    )
+                    for col in cols
+                )
+                tables.append(
+                    SchemaTable(
+                        name=table_name,
+                        columns=enriched_cols,
+                        description=descriptions_by_table.get(table_name),
+                        row_count=row_counts_by_table.get(table_name),
+                    )
+                )
+
+            metadata = DatasetMetadata(
+                tables=tuple(tables),
+                dataset_description=self._load_dataset_description(),
+                semantics_notes=(
+                    self._semantics_loader.load() if self._semantics_loader else None
+                ),
+            )
+            self._cached = metadata
+            self._cached_at = time.time()
+            LOGGER.info(
+                "Loaded agent schema: %d tables from %s.%s "
+                "(dataset_desc=%s, semantics_notes=%s)",
+                len(metadata.tables),
+                self._config.bq_project,
+                self._config.agent_dataset,
+                bool(metadata.dataset_description),
+                bool(metadata.semantics_notes),
+            )
+            return metadata
+
+    def render_for_prompt(self) -> str:
+        metadata = self.load()
+        if not metadata.tables:
+            return "(no tables found in gold dataset)"
+
+        parts: list[str] = []
+        parts.append(
+            f"## Dataset: `{self._config.bq_project}.{self._config.agent_dataset}`"
+        )
+        if metadata.dataset_description:
+            parts.append(f"Description: {metadata.dataset_description}")
+
+        if metadata.semantics_notes:
+            parts.append("")
+            parts.append("## Analyst notes (edit `gold_semantics.md` to update)")
+            parts.append(metadata.semantics_notes)
+
+        parts.append("")
+        parts.append("## Tables")
+        for table in metadata.tables:
+            row_count_suffix = (
+                f" ({table.row_count:,} rows)"
+                if table.row_count is not None
+                else ""
+            )
+            parts.append("")
+            parts.append(f"### `{table.name}`{row_count_suffix}")
+            if table.description:
+                parts.append(f"Description: {table.description}")
+            parts.append("Columns:")
+            for col in table.columns:
+                nullable = "" if col.is_nullable else " NOT NULL"
+                col_desc = f" — {col.description}" if col.description else ""
+                parts.append(f"  - {col.name} {col.data_type}{nullable}{col_desc}")
+
+        return "\n".join(parts)
+
+    # -- individual metadata queries -----------------------------------------
+
+    def _load_columns(self) -> dict[str, list[SchemaColumn]]:
+        sql = f"""
 SELECT
   table_name,
   column_name,
@@ -144,48 +287,99 @@ SELECT
 FROM `{self._config.bq_project}.{self._config.agent_dataset}.INFORMATION_SCHEMA.COLUMNS`
 ORDER BY table_name, ordinal_position
 """
-            job = self._client.query(sql)
-            rows = list(job.result())
-
-            by_table: dict[str, list[SchemaColumn]] = {}
-            for row in rows:
-                table = row["table_name"]
-                if table.endswith(STAGING_TABLE_SUFFIXES):
-                    continue
-                by_table.setdefault(table, []).append(
-                    SchemaColumn(
-                        name=row["column_name"],
-                        data_type=row["data_type"],
-                        is_nullable=(row["is_nullable"] == "YES"),
-                    )
+        by_table: dict[str, list[SchemaColumn]] = {}
+        for row in self._client.query(sql).result():
+            table = row["table_name"]
+            if table.endswith(STAGING_TABLE_SUFFIXES):
+                continue
+            by_table.setdefault(table, []).append(
+                SchemaColumn(
+                    name=row["column_name"],
+                    data_type=row["data_type"],
+                    is_nullable=(row["is_nullable"] == "YES"),
                 )
-
-            tables = tuple(
-                SchemaTable(name=name, columns=tuple(cols))
-                for name, cols in sorted(by_table.items())
             )
-            self._cached = tables
-            self._cached_at = time.time()
-            LOGGER.info(
-                "Loaded agent schema: %d tables from %s.%s",
-                len(tables),
-                self._config.bq_project,
-                self._config.agent_dataset,
+        return by_table
+
+    def _load_column_descriptions(self) -> dict[tuple[str, str], str]:
+        """Return {(table_name, column_name): description} for top-level columns."""
+        sql = f"""
+SELECT table_name, column_name, description
+FROM `{self._config.bq_project}.{self._config.agent_dataset}.INFORMATION_SCHEMA.COLUMN_FIELD_PATHS`
+WHERE field_path = column_name
+  AND description IS NOT NULL
+  AND description != ''
+"""
+        try:
+            rows = list(self._client.query(sql).result())
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("Column-description query failed, continuing without: %s", exc)
+            return {}
+        out: dict[tuple[str, str], str] = {}
+        for row in rows:
+            table = row["table_name"]
+            if table.endswith(STAGING_TABLE_SUFFIXES):
+                continue
+            out[(table, row["column_name"])] = str(row["description"]).strip()
+        return out
+
+    def _load_table_descriptions(self) -> dict[str, str]:
+        sql = f"""
+SELECT table_name, option_value
+FROM `{self._config.bq_project}.{self._config.agent_dataset}.INFORMATION_SCHEMA.TABLE_OPTIONS`
+WHERE option_name = 'description'
+"""
+        try:
+            rows = list(self._client.query(sql).result())
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("Table-description query failed, continuing without: %s", exc)
+            return {}
+        out: dict[str, str] = {}
+        for row in rows:
+            table = row["table_name"]
+            if table.endswith(STAGING_TABLE_SUFFIXES):
+                continue
+            raw = str(row["option_value"] or "").strip()
+            # option_value is stored as a BigQuery string literal, e.g. `"hello"`.
+            # Strip the surrounding quotes and unescape the classic BQ escapes.
+            if len(raw) >= 2 and raw[0] == raw[-1] == '"':
+                raw = raw[1:-1]
+            raw = raw.replace('\\"', '"').replace("\\\\", "\\").replace("\\n", "\n")
+            if raw:
+                out[table] = raw
+        return out
+
+    def _load_row_counts(self) -> dict[str, int]:
+        sql = f"""
+SELECT table_id AS table_name, row_count
+FROM `{self._config.bq_project}.{self._config.agent_dataset}.__TABLES__`
+"""
+        try:
+            rows = list(self._client.query(sql).result())
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("Row-count query failed, continuing without: %s", exc)
+            return {}
+        out: dict[str, int] = {}
+        for row in rows:
+            table = row["table_name"]
+            if table.endswith(STAGING_TABLE_SUFFIXES):
+                continue
+            count = row["row_count"]
+            if count is None:
+                continue
+            out[table] = int(count)
+        return out
+
+    def _load_dataset_description(self) -> str | None:
+        try:
+            dataset = self._client.get_dataset(
+                f"{self._config.bq_project}.{self._config.agent_dataset}"
             )
-            return tables
-
-    def render_for_prompt(self) -> str:
-        tables = self.load()
-        if not tables:
-            return "(no tables found in gold dataset)"
-
-        lines: list[str] = []
-        for table in tables:
-            lines.append(f"- `{table.name}`")
-            for col in table.columns:
-                nullable = "" if col.is_nullable else " NOT NULL"
-                lines.append(f"    - {col.name} {col.data_type}{nullable}")
-        return "\n".join(lines)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("Could not fetch dataset description: %s", exc)
+            return None
+        desc = (dataset.description or "").strip()
+        return desc or None
 
 
 # ---------------------------------------------------------------------------
@@ -304,9 +498,17 @@ PROMPT_INSTRUCTIONS = textwrap.dedent(
     - Prefer aggregation and ORDER BY when the question implies "top",
       "most", "highest", "lowest", "trend", etc.
     - Never use SELECT * on tables you haven't first narrowed with a WHERE
-      or aggregation — the dataset is large.
+      or aggregation — the row_count numbers shown per table are exact and
+      some tables may be very large.
 
-    Available schema (gold dataset):
+    Context priority (treat everything below as authoritative):
+    1. The dataset description tells you what the dataset is for overall.
+    2. The "Analyst notes" section captures conventions and gotchas that
+       aren't obvious from the schema (join keys, business definitions,
+       cross-table warnings). Follow these carefully.
+    3. Per-table and per-column descriptions explain what each field
+       actually means. Prefer them over guessing from column names.
+
     {schema}
 
     Return ONLY a JSON object with exactly two string fields:
@@ -462,12 +664,19 @@ class TextToSqlAgent:
 
     @classmethod
     def create(cls, config: AppConfig, bq_client: bigquery.Client) -> "TextToSqlAgent":
-        introspector = SchemaIntrospector(client=bq_client, config=config)
+        semantics_loader = SemanticsLoader(
+            file_path=_resolve_semantics_path(config.agent_semantics_file)
+        )
+        introspector = SchemaIntrospector(
+            client=bq_client,
+            config=config,
+            semantics_loader=semantics_loader,
+        )
         # Eagerly load the schema at construction time so that we fail fast
         # (and clearly) if the target dataset is empty or unreadable, rather
         # than sending an empty schema to Gemini every time a user asks.
-        tables = introspector.load()
-        if not tables:
+        metadata = introspector.load()
+        if not metadata.tables:
             raise SchemaUnavailableError(
                 f"Dataset `{config.bq_project}.{config.agent_dataset}` has no "
                 "queryable tables yet. The agent will be available once the "
@@ -545,3 +754,19 @@ def _format_bytes(num_bytes: int) -> str:
             return f"{num_bytes:.1f} {unit}"
         num_bytes /= step  # type: ignore[assignment]
     return f"{num_bytes:.1f} EB"
+
+
+def _resolve_semantics_path(raw: str | None) -> pathlib.Path | None:
+    """Resolve the analyst-authored semantics file path.
+
+    Search order:
+      1. Explicit override (`AppConfig.agent_semantics_file`, i.e. the
+         DASH_AGENT_SEMANTICS_FILE env var).
+      2. `<repo>/dashboard/app/gold_semantics.md`, i.e. next to this file.
+      3. None (no semantics file — introspector skips silently).
+    """
+    if raw:
+        path = pathlib.Path(raw).expanduser()
+        return path if path.is_absolute() else path.resolve()
+    default = pathlib.Path(__file__).with_name("gold_semantics.md")
+    return default if default.exists() else None
