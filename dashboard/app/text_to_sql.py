@@ -75,6 +75,10 @@ class QueryTooExpensiveError(AgentError):
     pass
 
 
+class SchemaUnavailableError(AgentError):
+    """Raised when the target dataset exists but has no queryable tables."""
+
+
 @dataclass(frozen=True)
 class SchemaColumn:
     name: str
@@ -458,9 +462,20 @@ class TextToSqlAgent:
 
     @classmethod
     def create(cls, config: AppConfig, bq_client: bigquery.Client) -> "TextToSqlAgent":
+        introspector = SchemaIntrospector(client=bq_client, config=config)
+        # Eagerly load the schema at construction time so that we fail fast
+        # (and clearly) if the target dataset is empty or unreadable, rather
+        # than sending an empty schema to Gemini every time a user asks.
+        tables = introspector.load()
+        if not tables:
+            raise SchemaUnavailableError(
+                f"Dataset `{config.bq_project}.{config.agent_dataset}` has no "
+                "queryable tables yet. The agent will be available once the "
+                "gold-layer tables are created."
+            )
         return cls(
             AgentComponents(
-                introspector=SchemaIntrospector(client=bq_client, config=config),
+                introspector=introspector,
                 validator=SqlValidator(row_limit=config.llm_row_limit),
                 executor=SqlExecutor(client=bq_client, config=config),
                 gemini=GeminiClient(config),
