@@ -55,14 +55,11 @@ At minimum:
 
 Optional overrides:
 
-- `DASH_BQ_DATASET` (default `neighborhood_livability_data`)
-- `DASH_BQ_LOCATION` (default `US`)
-- `DASH_BQ_TABLE_311` (default `311_incidents`)
-- `DASH_BQ_TABLE_POLICE` (default `police_incidents`)
-- `DASH_BQ_TABLE_TRIP_STOPS` (default `trip_stops`)
-- `DASH_BQ_TABLE_STOPS` (default `stops`)
-- `DASH_BQ_TABLE_NEIGHBORHOODS` (default `neighborhoods`)
-- `DASH_BQ_TABLE_POLICE_DISTRICTS` (default `police_districts`)
+- `DASH_BQ_DATASET` (default `neighborhood_livability_gold`)
+- `DASH_BQ_LOCATION` (default `us-central1`)
+- `DASH_BQ_TABLE_DASHBOARD_EVENTS` (default `gold_dashboard_events`)
+- `DASH_BQ_TABLE_BOUNDARIES` (default `gold_boundaries`)
+- `DASH_BQ_TABLE_RENTAL_LISTINGS` (default `gold_rental_listings`)
 - `DASH_CACHE_TTL_SECONDS` (default `300`)
 - `DASH_CACHE_MAX_ENTRIES` (default `512`)
 
