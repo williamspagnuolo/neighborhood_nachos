@@ -12,3 +12,4 @@ sources:
       - name: stops
       - name: neighborhoods
       - name: police_districts
+      - name: rental_listings

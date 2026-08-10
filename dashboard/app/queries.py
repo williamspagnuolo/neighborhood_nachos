@@ -134,6 +134,12 @@ class DashboardQueries:
                 local_start_time=local_start_time,
                 local_end_time=local_end_time,
             ),
+            "rentals": self._fetch_rental_comparison(
+                boundary_column=boundary_column,
+                boundary_id=boundary_id,
+                start_utc=start_utc,
+                end_utc=end_utc,
+            ),
         }
         return metrics
 
@@ -328,6 +334,142 @@ class DashboardQueries:
                 ),
             ],
         )
+    def _fetch_rental_comparison(
+        self,
+        boundary_column: str,
+        boundary_id: str,
+        start_utc: dt.datetime,
+        end_utc: dt.datetime,
+    ) -> list[dict[str, Any]]:
+        """
+        Return rental price comparisons by bedroom bucket for:
+
+        1. Listings that were active at any point during the selected date range.
+        2. Listings that are currently active.
+
+        The dashboard hour-of-day filter is intentionally not applied to rentals.
+        """
+
+        sql = f"""
+            WITH bedroom_buckets AS (
+                SELECT bedroom_bucket
+                FROM UNNEST([
+                    'studio',
+                    '1bd',
+                    '2bd',
+                    '3bd',
+                    '4bd+'
+                ]) AS bedroom_bucket
+            ),
+
+            selected_period AS (
+                SELECT
+                    bedroom_bucket,
+                    AVG(price) AS selected_average_price,
+                    COUNT(*) AS selected_listing_count
+
+                FROM {self.config.table_id(self.config.table_rental_listings)}
+
+                WHERE {boundary_column} = @boundary_id
+                AND bedroom_bucket IN (
+                    'studio',
+                    '1bd',
+                    '2bd',
+                    '3bd',
+                    '4bd+'
+                )
+
+                -- Listing existed at some point during selected period.
+                AND listed_date < @end_utc
+                AND (
+                    removed_date IS NULL
+                    OR removed_date > @start_utc
+                )
+
+                GROUP BY bedroom_bucket
+            ),
+
+            current_market AS (
+                SELECT
+                    bedroom_bucket,
+                    AVG(price) AS current_average_price,
+                    COUNT(*) AS current_listing_count
+
+                FROM {self.config.table_id(self.config.table_rental_listings)}
+
+                WHERE {boundary_column} = @boundary_id
+                AND bedroom_bucket IN (
+                    'studio',
+                    '1bd',
+                    '2bd',
+                    '3bd',
+                    '4bd+'
+                )
+                AND removed_date IS NULL
+                AND listed_date <= CURRENT_TIMESTAMP()
+
+                GROUP BY bedroom_bucket
+            )
+
+            SELECT
+                buckets.bedroom_bucket,
+
+                selected.selected_average_price,
+                COALESCE(
+                    selected.selected_listing_count,
+                    0
+                ) AS selected_listing_count,
+
+                cm.current_average_price,
+                COALESCE(
+                    cm.current_listing_count,
+                    0
+                ) AS current_listing_count,
+
+                CURRENT_DATE(
+                    'America/Los_Angeles'
+                ) AS current_as_of
+
+            FROM bedroom_buckets AS buckets
+
+            LEFT JOIN selected_period AS selected
+                USING (bedroom_bucket)
+
+            LEFT JOIN current_market AS cm
+                USING (bedroom_bucket)
+
+            ORDER BY
+                CASE buckets.bedroom_bucket
+                    WHEN 'studio' THEN 0
+                    WHEN '1bd' THEN 1
+                    WHEN '2bd' THEN 2
+                    WHEN '3bd' THEN 3
+                    WHEN '4bd+' THEN 4
+                    ELSE 5
+                END
+        """
+
+        return self._run_query(
+            sql=sql,
+            params=[
+                bigquery.ScalarQueryParameter(
+                    "boundary_id",
+                    "STRING",
+                    boundary_id,
+                ),
+                bigquery.ScalarQueryParameter(
+                    "start_utc",
+                    "TIMESTAMP",
+                    start_utc,
+                ),
+                bigquery.ScalarQueryParameter(
+                    "end_utc",
+                    "TIMESTAMP",
+                    end_utc,
+                ),
+            ],
+        )
+        
 
     def _run_query(
         self,

@@ -16,6 +16,7 @@ class AppConfig:
 
     table_dashboard_events: str = "gold_dashboard_events"
     table_boundaries: str = "gold_boundaries"
+    table_rental_listings: str = "gold_rental_listings"
     
     cache_ttl_seconds: int = 300
     cache_max_entries: int = 512
@@ -50,6 +51,8 @@ class AppConfig:
                                              "gold_dashboard_events").strip(),
             table_boundaries=os.getenv("DASH_BQ_TABLE_BOUNDARIES",
                                        "gold_boundaries").strip(),
+            table_rental_listings=os.getenv("DASH_BQ_TABLE_RENTAL_LISTINGS",
+                                            "gold_rental_listings").strip(),
             cache_ttl_seconds=int(os.getenv("DASH_CACHE_TTL_SECONDS", "300")),
             cache_max_entries=int(os.getenv("DASH_CACHE_MAX_ENTRIES", "512")),
             agent_enabled=_env_bool("DASH_AGENT_ENABLED", default=True),

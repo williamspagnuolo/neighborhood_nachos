@@ -1,4 +1,4 @@
-version: 2
+version: 3
 
 models:
   - name: gold_dashboard_events
@@ -34,3 +34,59 @@ models:
       - name: event_date_pacific
         tests: 
           - not_null
+
+  - name: gold_rental_listings
+    description: >
+      Deduplicated rental listings used by the 
+      San Francisco Livability Dashboard.
+      Grain is one row per rentcast_id and listed_date.
+    
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - rentcast_id
+              - listed_date
+    columns:
+      - name: rentcast_id
+        tests:
+          - not_null
+      - name: listed_date
+        tests:
+          - not_null
+      - name: removed_date
+        description: >
+          Date the listing was removed. Null indicates the 
+          listing is currently active.
+      - name: neighborhood_id
+        tests:
+          - not_null:
+              config:
+                severity: warn
+      - name: police_district_id
+        tests:
+          - not_null:
+              config:
+                severity: warn
+      - name: bedroom_bucket
+        description: >
+          Standardized bedroom category used by dashboard 
+          rental metrics.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - studio
+                  - 1bd
+                  - 2bd
+                  - 3bd
+                  - 4bd+
+                  - unknown
+      - name: price
+        tests:
+          - not_null
+      - name: geometry
+        description: >
+          BigQuery GEOGRAPHY point constructed from listing 
+          coordinates.

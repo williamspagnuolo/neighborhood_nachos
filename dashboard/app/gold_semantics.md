@@ -36,6 +36,7 @@ here only when they don't naturally fit on a single table or column.
 - For dashboard and general analytical questions, prefer these curated dbt mart tables:
   - `gold_dashboard_events`
   - `gold_boundaries`
+  - `gold_rental_listings`
 
 - Do not use `stage_*` or `int_*` models unless the requested information cannot be answered from the gold marts.
 
@@ -53,6 +54,40 @@ here only when they don't naturally fit on a single table or column.
 - All timestamps are UTC in `event_ts_utc`.
 - `event_date_pacific` and `event_time_pacific` provide Pacific-local calendar values for dashboard filtering.
 
+### gold_rental_listings
+
+- **One row represents one rental listing episode.** The intended grain is
+  `rentcast_id` + `listed_date`. A single RentCast property/listing ID may have
+  multiple historical listing episodes if it was removed and later relisted.
+- `listed_date` and `removed_date` are UTC TIMESTAMP values.
+- `removed_date IS NULL` means the listing episode is currently active.
+- `price` is the asking rent for that listing episode.
+- `bedroom_bucket` is the dashboard-ready grouping and is expected to contain:
+  - `studio`
+  - `1bd`
+  - `2bd`
+  - `3bd`
+  - `4bd+`
+  - `unknown`
+- Rental rows already contain `neighborhood_id` and `police_district_id`; use
+  those assigned boundary IDs for normal analytical queries rather than a
+  spatial join.
+- For a selected dashboard date range represented by an inclusive Pacific start
+  date and inclusive Pacific end date, convert that range to UTC as
+  `[start_utc, end_utc)` and include a rental episode when its active interval
+  overlaps the selected interval:
+
+    listed_date < end_utc
+    AND (removed_date IS NULL OR removed_date > start_utc)
+
+- Do **not** filter rentals with `listed_date BETWEEN start AND end`; that would
+  omit listings that began before the selected period but remained available
+  during it.
+- For current-market metrics, use `removed_date IS NULL` (and exclude any
+  future-dated listings with `listed_date <= CURRENT_TIMESTAMP()`).
+- The dashboard's hour-of-day control applies to event data, not rentals. Rental
+  comparisons should use the selected calendar-date range only.
+
 ### gold_boundaries
 
 - **Contains both neighborhood and police-district boundaries.**
@@ -64,7 +99,7 @@ here only when they don't naturally fit on a single table or column.
 - Rows with NULL geometry represent the intentional unlocated/unknown boundary member and should be retained for analytics but not rendered on maps.
 
 ## Boundary Conventions
-**`gold_dashboard_events` contains both:**
+**`gold_dashboard_events` and `gold_rental_listings` both contain:**
 
 - `neighborhood_id`
 - `police_district_id`
@@ -97,7 +132,7 @@ Do not compare STRING boundary identifiers to INT64 literals.
     - 'neighborhoods'
     - 'police_districts'
   - Use `boundary_name` for the human-readable boundary name.
-  - Use `boundary_id` to join to the corresponding foreign key in `gold_dashboard_events`.
+  - Use `boundary_id` to join to the corresponding foreign key in `gold_dashboard_events` or `gold_rental_listings`.
 
 **Neighborhood joins**
 
@@ -133,7 +168,7 @@ Do not compare STRING boundary identifiers to INT64 literals.
 - Do not group by boundary_name before establishing the correct boundary-ID join.
 
 - **"Over the last N days"** → filter on:
-`event_date_pacifc` >= DATE_SUB(CURRENT_DATE("America/Los_Angeles"), INTERVAL N DAY)`
+`event_date_pacific` >= DATE_SUB(CURRENT_DATE("America/Los_Angeles"), INTERVAL N DAY)`
 
 ## Data-quality caveats
 - The most recent 2-3 days of any incident-source data (police, 311)

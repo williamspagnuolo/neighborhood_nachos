@@ -64,6 +64,134 @@ def _format_percent(value: float | None) -> str:
     return f"{float(value):.1f}%"
 
 
+BEDROOM_BUCKETS: tuple[tuple[str, str], ...] = (
+    ("studio", "Studio"),
+    ("1bd", "1 BD"),
+    ("2bd", "2 BD"),
+    ("3bd", "3 BD"),
+    ("4bd+", "4 BD+"),
+)
+
+
+def _format_currency(value: float | int | None) -> str:
+    if value is None:
+        return "N/A"
+    return f"${float(value):,.0f}"
+
+
+def _format_date_label(value: object) -> str:
+    if value is None:
+        return "today"
+    if isinstance(value, dt.datetime):
+        value = value.date()
+    if isinstance(value, dt.date):
+        return value.strftime("%b %-d, %Y")
+    try:
+        return dt.date.fromisoformat(str(value)).strftime("%b %-d, %Y")
+    except ValueError:
+        return str(value)
+
+
+def _rental_value_cell(value: float | int | None, count: int | None) -> html.Div:
+    count_value = int(count or 0)
+    listing_word = "listing" if count_value == 1 else "listings"
+    return html.Div(
+        [
+            html.Div(_format_currency(value), style={"fontSize": "22px", "fontWeight": "700"}),
+            html.Div(
+                f"{count_value:,} {listing_word}",
+                style={"fontSize": "12px", "color": "#6B7280", "marginTop": "2px"},
+            ),
+        ],
+        style={"textAlign": "center", "padding": "8px 6px"},
+    )
+
+
+def _build_rental_comparison(
+    rows: list[dict[str, Any]],
+    start_date: str | None,
+    end_date: str | None,
+) -> html.Div:
+    by_bucket = {str(row.get("bedroom_bucket")): row for row in rows}
+    current_as_of = next(
+        (row.get("current_as_of") for row in rows if row.get("current_as_of") is not None),
+        dt.datetime.now(tz=PACIFIC_TZ).date(),
+    )
+
+    selected_label = "Selected timeframe"
+    if start_date and end_date:
+        selected_label = f"{_format_date_label(start_date)} – {_format_date_label(end_date)}"
+
+    grid_children: list[Any] = [
+        html.Div("", style={"padding": "6px"}),
+        *[
+            html.Div(label, style={"fontWeight": "700", "textAlign": "center", "padding": "6px"})
+            for _, label in BEDROOM_BUCKETS
+        ],
+        html.Div(
+            [
+                html.Div("Average listing prices over selected timeframe", style={"fontWeight": "600"}),
+                html.Div(selected_label, style={"fontSize": "12px", "color": "#6B7280", "marginTop": "2px"}),
+            ],
+            style={"padding": "8px 10px"},
+        ),
+    ]
+
+    for bucket, _ in BEDROOM_BUCKETS:
+        row = by_bucket.get(bucket, {})
+        grid_children.append(
+            _rental_value_cell(
+                row.get("selected_average_price"),
+                row.get("selected_listing_count"),
+            )
+        )
+
+    grid_children.append(
+        html.Div(
+            [
+                html.Div("vs current average listing prices", style={"fontWeight": "600"}),
+                html.Div(
+                    f"as of {_format_date_label(current_as_of)}",
+                    style={"fontSize": "12px", "color": "#6B7280", "marginTop": "2px"},
+                ),
+            ],
+            style={"padding": "8px 10px"},
+        )
+    )
+
+    for bucket, _ in BEDROOM_BUCKETS:
+        row = by_bucket.get(bucket, {})
+        grid_children.append(
+            _rental_value_cell(
+                row.get("current_average_price"),
+                row.get("current_listing_count"),
+            )
+        )
+
+    return html.Div(
+        [
+            html.Div("Rental Market", style={"fontSize": "18px", "fontWeight": "700", "marginBottom": "8px"}),
+            html.Div(
+                grid_children,
+                style={
+                    "display": "grid",
+                    "gridTemplateColumns": "minmax(230px, 1.45fr) repeat(5, minmax(105px, 1fr))",
+                    "alignItems": "stretch",
+                    "columnGap": "4px",
+                    "rowGap": "2px",
+                },
+            ),
+        ],
+        style={
+            "border": "1px solid #E5E7EB",
+            "borderRadius": "6px",
+            "padding": "12px",
+            "backgroundColor": "#FFFFFF",
+            "overflowX": "auto",
+        },
+    )
+
+
 def _parse_local_time(value: str | None, fallback: dt.time) -> dt.time:
     if not value:
         return fallback
@@ -273,6 +401,7 @@ def build_dashboard_app() -> Dash:
                 ],
                 style={"display": "flex", "gap": "12px", "alignItems": "stretch"},
             ),
+            html.Div(id="rental-market", style={"marginTop": "12px"}),
             html.Div(
                 [
                     dcc.Loading(dcc.Graph(id="hist-311"), type="default"),
@@ -338,6 +467,7 @@ def build_dashboard_app() -> Dash:
         Output("kpi-transit-total", "children"),
         Output("kpi-transit-delay-median", "children"),
         Output("kpi-transit-delay-over5", "children"),
+        Output("rental-market", "children"),
         Output("hist-311", "figure"),
         Output("hist-police", "figure"),
         Output("error-message", "children"),
@@ -380,6 +510,7 @@ def build_dashboard_app() -> Dash:
                     "N/A",
                     "N/A",
                     "N/A",
+                    _build_rental_comparison([], start_date, end_date),
                     empty_histogram("311 Incidents by Service Name", "No boundary selected."),
                     empty_histogram("Police Incidents by Category", "No boundary selected."),
                     "",
@@ -397,10 +528,12 @@ def build_dashboard_app() -> Dash:
                     no_update,
                     no_update,
                     no_update,
+                    no_update,
                     "Date range is invalid.",
                 )
             if start_utc >= end_utc:
                 return (
+                    no_update,
                     no_update,
                     no_update,
                     no_update,
@@ -426,10 +559,12 @@ def build_dashboard_app() -> Dash:
                     no_update,
                     no_update,
                     no_update,
+                    no_update,
                     "Time window is invalid. Use HH:MM format.",
                 )
             if local_start_time > local_end_time:
                 return (
+                    no_update,
                     no_update,
                     no_update,
                     no_update,
@@ -468,6 +603,12 @@ def build_dashboard_app() -> Dash:
             totals = cached["totals"]
             hist_311_rows = cached["hist_311"]
             hist_police_rows = cached["hist_police"]
+            rental_rows = cached["rentals"]
+            rental_comparison = _build_rental_comparison(
+                rental_rows,
+                start_date=start_date,
+                end_date=end_date,
+            )
 
             hist_311_figure = (
                 build_histogram("311 Incidents by Service Name", hist_311_rows)
@@ -488,6 +629,7 @@ def build_dashboard_app() -> Dash:
                 _format_int(totals.get("transit_arrivals_total")),
                 _format_delay_minutes_with_direction(totals.get("transit_median_delay_sec")),
                 _format_percent(totals.get("transit_pct_delay_over_300_sec")),
+                rental_comparison,
                 hist_311_figure,
                 hist_police_figure,
                 "",
@@ -504,6 +646,7 @@ def build_dashboard_app() -> Dash:
                 "N/A",
                 "N/A",
                 "N/A",
+                _build_rental_comparison([], start_date, end_date),
                 empty_histogram("311 Incidents by Service Name", "Data unavailable."),
                 empty_histogram("Police Incidents by Category", "Data unavailable."),
                 f"Error: {exc}",
