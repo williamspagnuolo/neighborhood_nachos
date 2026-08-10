@@ -1,5 +1,5 @@
 FROM --platform=linux/amd64 continuumio/miniconda3
 WORKDIR /transform_app
-COPY * .
+COPY . .
 RUN conda env create -f environment.yaml -n env_transform_rentals
 CMD ["conda", "run", "--no-capture-output", "-n", "env_transform_rentals", "python", "transform_rentals.py"]

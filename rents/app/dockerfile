@@ -1,5 +1,5 @@
 FROM --platform=linux/amd64 continuumio/miniconda3
 WORKDIR /app
-COPY * .
+COPY . .
 RUN conda env create -f environment.yaml -n env_rentals
 CMD ["conda", "run", "--no-capture-output", "-n", "env_rentals", "python", "upload_rental_to_bucket.py"]
