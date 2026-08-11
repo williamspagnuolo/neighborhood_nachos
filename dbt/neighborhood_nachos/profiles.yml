@@ -1,0 +1,14 @@
+neighborhood_nachos:
+  outputs:
+    prod:
+      type: bigquery
+      method: oauth
+      project: neighboorhood-nachos
+      dataset: neighborhood_livability_gold
+      location: us-central1
+      threads: 4
+      priority: interactive
+      job_execution_timeout_seconds: 300
+      job_retries: 1
+
+  target: prod
